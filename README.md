@@ -3,17 +3,18 @@
 Responsive end-to-end farm e-commerce web app.
 
 ## Features
-- Product catalog with categories: Fruits, Vegetables, Dairy, Oil
-- Variant selection popup for Mango and Coconut types
+- Product catalogue with categories: Fruits, Vegetables, Dairy, Oil
+- Variant selections pop-up for a specific product
 - Cart with quantity controls
-- Signup/Login with email and password
-- Forgot password + reset password flow
+- Sign up/Login with email and password, Forgot password + reset password flow
 - Protected checkout (login required)
-- Checkout with payment methods: `COD` and `PICKUP`
-- Address required for COD orders
+- Checkout with payment methods: `COD` and `PICKUP`, Address required for COD orders
 - Order persistence in MongoDB
-- Owner email notification on new order (SMTP configurable)
+- Admin gets email notification on new order (SMTP configurable)
 - "My Orders" history for logged-in users
+- Customers receive order and status details
+- Customers can open tickets with a customer representative, managed by an admin
+- Admin can update stock details and manage products. Has access to dashboard
 
 ## Tech
 - Node.js + Express
