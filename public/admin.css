@@ -1,0 +1,264 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f2f5ef;
+  color: #1f2a1f;
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("/mailimage.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: min(58vw, 620px);
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.wrap {
+  position: relative;
+  z-index: 1;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.admin-brand-logo {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #d5e3d0;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #d7e4d2;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+#panelCard > .card {
+  padding: 0;
+  overflow: hidden;
+}
+
+#panelCard > .card .card-toggle {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #d7e4d2;
+  border-radius: 0;
+  background: linear-gradient(180deg, #f8fcf7, #f1f7ef);
+  color: #1f4c2c;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  font-size: 1.03rem;
+  font-weight: 800;
+}
+
+#panelCard > .card .card-toggle-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.2s ease;
+}
+
+#panelCard > .card .card-body {
+  display: none;
+  padding: 1rem;
+}
+
+#panelCard > .card.expanded .card-body {
+  display: block;
+}
+
+#panelCard > .card.expanded .card-toggle-icon {
+  transform: rotate(45deg);
+}
+
+form {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.grid-form {
+  max-width: 700px;
+}
+
+.inline-form {
+  display: grid;
+  grid-template-columns: 1fr 110px 110px auto;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+input,
+button,
+select,
+textarea {
+  font: inherit;
+  padding: 0.55rem;
+  border-radius: 8px;
+  border: 1px solid #c8d8c3;
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  background: #2f6b3f;
+  color: #fff;
+  font-weight: 700;
+}
+
+button:hover {
+  filter: brightness(1.03);
+}
+
+.orders,
+.stack {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.order,
+.item {
+  border: 1px solid #d8e6d3;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #fcfdfb;
+}
+
+.order-alert {
+  border: 1px solid #cfe3c8;
+  background: linear-gradient(180deg, #f8fcf6, #f2f9ef);
+}
+
+.alert-close {
+  background: #b13232;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.meta {
+  color: #516151;
+  font-size: 0.9rem;
+}
+
+.tag {
+  display: inline-block;
+  background: #e8f3e7;
+  color: #254e2f;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.toast {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  background: #204b2c;
+  color: white;
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.6rem;
+  margin: 0.8rem 0;
+}
+
+.kpi {
+  border: 1px solid #d8e6d3;
+  border-radius: 10px;
+  background: #f9fcf8;
+  padding: 0.7rem;
+}
+
+.kpi strong {
+  font-size: 1.15rem;
+  color: #1f5a31;
+}
+
+.trend-wrap {
+  width: 100%;
+  min-height: 210px;
+}
+
+.trend-svg {
+  width: 100%;
+  height: 180px;
+  background: #f9fcf8;
+  border: 1px solid #d8e6d3;
+  border-radius: 10px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.product-item details {
+  margin-top: 0.55rem;
+}
+
+.variant-row {
+  display: grid;
+  grid-template-columns: 1fr 130px 120px auto auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.variant-row input {
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .variant-row {
+    grid-template-columns: 1fr;
+  }
+}

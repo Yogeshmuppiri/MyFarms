@@ -1,0 +1,28 @@
+{
+  "name": "my-farms-platform",
+  "version": "1.2.0",
+  "description": "My Farms end-to-end e-commerce platform",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "client:dev": "vite --config client/vite.config.js",
+    "build:client": "vite build --config client/vite.config.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "mongoose": "^8.11.0",
+    "multer": "^2.1.1",
+    "nodemailer": "^6.10.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.0",
+    "nodemon": "^3.1.10",
+    "vite": "^6.3.5"
+  }
+}

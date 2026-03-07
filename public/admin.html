@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Farms Admin</title>
+    <link rel="icon" type="image/png" href="/myfarmslogo.png" />
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="admin-brand">
+          <img src="/myfarmslogo.png" alt="My Farms logo" class="admin-brand-logo" />
+          <h1>My Farms Admin</h1>
+        </div>
+        <div id="adminActions"></div>
+      </header>
+
+      <section id="loginCard" class="card">
+        <h2>Admin Login</h2>
+        <form id="adminLoginForm">
+          <label>Email</label>
+          <input id="adminEmail" type="email" required />
+          <label>Password</label>
+          <input id="adminPassword" type="password" required />
+          <button type="submit">Login</button>
+        </form>
+      </section>
+
+      <section id="panelCard" class="hidden">
+        <section class="card">
+          <h2>New Order Alerts</h2>
+          <div id="newOrderAlerts" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Dashboard</h2>
+          <form id="dashboardFilterForm" class="grid-form">
+            <label>Date From</label>
+            <input id="dashboardDateFrom" type="date" />
+            <label>Date To</label>
+            <input id="dashboardDateTo" type="date" />
+            <label>Status</label>
+            <select id="dashboardStatus">
+              <option value="">All</option>
+              <option value="PLACED">Placed</option>
+              <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
+              <option value="ORDER_READY_FOR_PICKUP">Order Ready for Pickup</option>
+              <option value="CANCELED">Canceled</option>
+              <option value="DELIVERED">Delivered</option>
+            </select>
+            <label>Category</label>
+            <input id="dashboardCategory" type="text" placeholder="Fruits, Vegetables..." />
+            <button type="submit">Apply Filters</button>
+          </form>
+          <div class="kpis" id="kpiWrap"></div>
+          <div class="split">
+            <div>
+              <h3>Top Products</h3>
+              <div id="topProducts" class="stack"></div>
+            </div>
+            <div>
+              <h3>Low Stock</h3>
+              <div id="lowStockList" class="stack"></div>
+            </div>
+          </div>
+          <div class="card" style="margin-top: 0.8rem;">
+            <h3>Orders Trend</h3>
+            <div id="trendChart" class="trend-wrap"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Promo Management</h2>
+          <form id="promoForm" class="grid-form">
+            <label>Code</label>
+            <input id="promoCode" type="text" required placeholder="SAVE10" />
+            <label>Discount %</label>
+            <input id="promoDiscount" type="number" min="1" max="90" required />
+            <label>Min Order Value</label>
+            <input id="promoMinOrder" type="number" min="0" step="0.01" value="0" />
+            <label>Max Uses</label>
+            <input id="promoMaxUses" type="number" min="1" value="100" required />
+            <label>Expiry</label>
+            <input id="promoExpiry" type="date" required />
+            <button type="submit">Create Promo</button>
+          </form>
+          <div id="promoList" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Add Product</h2>
+          <form id="productForm" enctype="multipart/form-data" class="grid-form">
+            <label>Name</label>
+            <input id="productName" type="text" required />
+            <label>Category</label>
+            <input id="productCategory" type="text" required />
+            <label>Price</label>
+            <input id="productPrice" type="number" min="1" step="0.01" required />
+            <label>Unit</label>
+            <input id="productUnit" type="text" value="kg" required />
+            <label>Stock</label>
+            <input id="productStock" type="number" min="0" step="1" value="100" required />
+            <label>Featured</label>
+            <select id="productFeatured">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+            <label>Variants (Optional JSON Array)</label>
+            <textarea id="productVariants" rows="3" placeholder='[{"name":"A","price":120,"stock":10}]'></textarea>
+            <label>Image</label>
+            <input id="productImage" type="file" accept=".png,.jpg,.jpeg,.webp" required />
+            <button type="submit">Add Product</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>Product Management</h2>
+          <label>Select Product</label>
+          <select id="manageProductSelect"></select>
+          <form id="manageProductForm" class="grid-form">
+            <label>Name</label>
+            <input id="manageName" type="text" required />
+            <label>Category</label>
+            <input id="manageCategory" type="text" required />
+            <label>Price</label>
+            <input id="managePrice" type="number" min="1" step="0.01" required />
+            <label>Unit</label>
+            <input id="manageUnit" type="text" required />
+            <label>Stock</label>
+            <input id="manageStock" type="number" min="0" step="1" required />
+            <label>Featured</label>
+            <select id="manageFeatured">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+            <button type="submit">Save Product</button>
+            <button id="deleteProductBtn" type="button">Delete Product</button>
+          </form>
+          <h3>Variants</h3>
+          <div id="variantList" class="stack"></div>
+          <form id="variantForm" class="inline-form">
+            <input id="variantName" placeholder="Variant name" required />
+            <input id="variantPrice" type="number" min="1" step="0.01" placeholder="Price" required />
+            <input id="variantStock" type="number" min="0" step="1" placeholder="Stock" value="0" required />
+            <button type="submit">Add Variant</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>Stock Control</h2>
+          <div class="split">
+            <div>
+              <form id="stockControlForm" class="grid-form">
+                <label>Product</label>
+                <select id="stockProductSelect"></select>
+                <label>Availability</label>
+                <select id="stockFlag">
+                  <option value="false">In Stock</option>
+                  <option value="true">Out Of Stock</option>
+                </select>
+                <label>Restock Quantity (required for In Stock)</label>
+                <input id="restockQuantity" type="number" min="1" step="1" value="100" />
+                <div id="stockVariantWrap" class="hidden">
+                  <label>Variant Quantities (required for variant products)</label>
+                  <div id="stockVariantList" class="stack"></div>
+                </div>
+                <button type="submit">Update Stock Flag</button>
+              </form>
+            </div>
+            <div>
+              <h3>Out Of Stock List</h3>
+              <div id="outOfStockList" class="stack"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Orders</h2>
+          <form id="orderFilterForm" class="grid-form">
+            <label>Date From</label>
+            <input id="orderDateFrom" type="date" />
+            <label>Date To</label>
+            <input id="orderDateTo" type="date" />
+            <label>Status</label>
+            <select id="orderStatus">
+              <option value="">All</option>
+              <option value="PLACED">Placed</option>
+              <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
+              <option value="ORDER_READY_FOR_PICKUP">Order Ready for Pickup</option>
+              <option value="CANCELED">Canceled</option>
+              <option value="DELIVERED">Delivered</option>
+            </select>
+            <label>Category</label>
+            <input id="orderCategory" type="text" placeholder="Fruits, Vegetables..." />
+            <button type="submit">Apply Order Filters</button>
+          </form>
+          <div id="ordersWrap" class="orders"></div>
+        </section>
+
+        <section class="card">
+          <h2>Customer Complaints</h2>
+          <form id="complaintFilterForm" class="grid-form">
+            <label>Status</label>
+            <select id="complaintStatus">
+              <option value="">All</option>
+              <option value="OPEN">Open</option>
+              <option value="CLOSED">Closed</option>
+            </select>
+            <button type="submit">Apply Complaint Filter</button>
+          </form>
+          <div id="complaintsWrap" class="orders"></div>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="admin.js"></script>
+  </body>
+</html>

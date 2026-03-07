@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Farms - Fresh Farm Products</title>
+    <link rel="icon" type="image/png" href="/myfarmslogo.png" />
+    <link rel="apple-touch-icon" href="/myfarmslogo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <nav class="topnav">
+        <div class="brand">
+          <img src="/myfarmslogo.png" alt="My Farms logo" class="brand-logo" />
+        </div>
+        <div class="nav-actions" id="navActions"></div>
+      </nav>
+      <div class="hero-content">
+        <div class="hero-copy">
+          <p class="kicker">Farm To Home</p>
+          <h1>Fresh, Natural, and Direct From Farmers</h1>
+          <p>
+            Fruits, vegetables, dairy, and traditional bull-driven groundnut oil. Quality harvests from our farms,
+            delivered to your doorstep.
+          </p>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="controls">
+        <h2>Shop Products</h2>
+        <div class="controls-right">
+          <input id="productSearch" type="search" placeholder="Search products (e.g. mango, milk, carrot)" />
+          <div class="filter-wrap" id="categoryFilters"></div>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <div>
+          <div class="products-grid" id="productsGrid"></div>
+        </div>
+
+        <aside class="cart-panel">
+          <h3>Cart</h3>
+          <div id="cartItems"></div>
+          <div class="total-row">
+            <span>Total</span>
+            <strong id="cartTotal">Rs.0</strong>
+          </div>
+          <button class="btn-primary" id="checkoutBtn">Checkout</button>
+          <p class="muted small">Checkout requires login/signup with email.</p>
+        </aside>
+      </section>
+
+      <section class="orders-section">
+        <h3>My Orders</h3>
+        <div id="ordersList" class="orders-list"></div>
+      </section>
+    </main>
+
+    <div class="modal hidden" id="authModal">
+      <div class="modal-card">
+        <button class="close-btn" data-close="authModal">x</button>
+        <h3 id="authTitle">Login</h3>
+        <form id="authForm">
+          <div class="field hidden" id="nameField">
+            <label>Name</label>
+            <input id="authName" type="text" />
+          </div>
+          <div class="field">
+            <label>Email</label>
+            <input id="authEmail" type="email" required />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input id="authPassword" type="password" required />
+          </div>
+          <button class="btn-primary" type="submit" id="authSubmit">Login</button>
+          <button class="btn-ghost" type="button" id="toggleAuthMode">Create account</button>
+          <button class="btn-link" type="button" id="forgotBtn">Forgot password?</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="variantModal">
+      <div class="modal-card">
+        <button class="close-btn" data-close="variantModal">x</button>
+        <h3 id="variantTitle">Choose Variant</h3>
+        <div id="variantOptions"></div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="checkoutModal">
+      <div class="modal-card">
+        <button class="close-btn" data-close="checkoutModal">x</button>
+        <h3>Checkout</h3>
+        <form id="checkoutForm">
+          <div class="field">
+            <label>Full Name</label>
+            <input id="checkoutFullName" type="text" required />
+          </div>
+          <div class="field">
+            <label>Contact Number</label>
+            <input id="checkoutContact" type="tel" required placeholder="e.g. +91 98765 43210" />
+          </div>
+          <div class="field">
+            <label>Tip For Delivery (Optional)</label>
+            <input id="checkoutTip" type="number" min="0" step="1" placeholder="e.g. 20" />
+          </div>
+          <div class="field">
+            <label>Payment Method</label>
+            <select id="paymentMethod" required>
+              <option value="COD">Cash On Delivery</option>
+              <option value="PICKUP">Store Pickup</option>
+            </select>
+          </div>
+          <div class="field" id="addressField">
+            <label>Delivery Address</label>
+            <textarea id="deliveryAddress" rows="3" placeholder="House no, street, area, city, pincode"></textarea>
+          </div>
+          <button class="btn-primary" type="submit">Place Order</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="forgotModal">
+      <div class="modal-card">
+        <button class="close-btn" data-close="forgotModal">x</button>
+        <h3>Forgot Password</h3>
+        <form id="forgotForm">
+          <div class="field">
+            <label>Email</label>
+            <input id="forgotEmail" type="email" required />
+          </div>
+          <button class="btn-primary" type="submit">Send Reset Link</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
