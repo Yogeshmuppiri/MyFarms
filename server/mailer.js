@@ -3,8 +3,26 @@ const path = require("path");
 const fs = require("fs");
 let cachedTransporter = null;
 
-function hasSmtpConfig() {
+function hasRawSmtpConfig() {
   return !!(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+function hasResendConfig() {
+  return !!process.env.RESEND_API_KEY;
+}
+
+function hasEmailConfig() {
+  return hasResendConfig() || hasRawSmtpConfig();
+}
+
+function hasSmtpConfig() {
+  // Kept for backward compatibility with existing callers in server/index.js.
+  // Returns true when any email provider is configured.
+  return hasEmailConfig();
+}
+
+function getFromAddress() {
+  return process.env.MAIL_FROM || process.env.SMTP_USER || "My Farms <onboarding@resend.dev>";
 }
 
 function createTransporter() {
@@ -29,7 +47,7 @@ function createTransporter() {
 }
 
 function getTransporter() {
-  if (!hasSmtpConfig()) return null;
+  if (!hasRawSmtpConfig()) return null;
   if (!cachedTransporter) {
     cachedTransporter = createTransporter();
   }
@@ -78,6 +96,89 @@ async function sendWithRetry(transporter, mailOptions, retries = 3) {
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
   }
+}
+
+function parseRecipients(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.flatMap((v) => parseRecipients(v));
+  return String(value)
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function resolveLogoUrl() {
+  const explicit = String(process.env.EMAIL_LOGO_URL || "").trim();
+  if (explicit) return explicit;
+  const base = String(process.env.APP_BASE_URL || "").trim().replace(/\/+$/, "");
+  return base ? `${base}/resources/mailimage.png` : "";
+}
+
+function normalizeHtmlForApi(html) {
+  const raw = String(html || "");
+  if (!raw) return raw;
+  const logoUrl = resolveLogoUrl();
+  if (!logoUrl) {
+    return raw.replace(/<img[^>]*cid:myfarms-logo[^>]*>/gi, "");
+  }
+  return raw.replace(/cid:myfarms-logo/gi, logoUrl);
+}
+
+async function sendViaResend(mailOptions) {
+  const to = parseRecipients(mailOptions.to);
+  if (!to.length) return;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: mailOptions.from || getFromAddress(),
+      to,
+      subject: mailOptions.subject || "",
+      text: mailOptions.text || "",
+      html: normalizeHtmlForApi(mailOptions.html || "")
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    const err = new Error(`Resend API error (${response.status}): ${body || response.statusText}`);
+    err.status = response.status;
+    throw err;
+  }
+}
+
+function isTransientResendError(err) {
+  const status = Number(err && err.status);
+  if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+  const msg = String((err && err.message) || "").toUpperCase();
+  return msg.includes("TIMED OUT") || msg.includes("ECONNRESET") || msg.includes("FETCH FAILED");
+}
+
+async function sendMailWithProvider(mailOptions, retries = 3) {
+  if (hasResendConfig()) {
+    let attempt = 0;
+    while (true) {
+      try {
+        await sendViaResend(mailOptions);
+        return;
+      } catch (err) {
+        if (attempt >= retries || !isTransientResendError(err)) throw err;
+        attempt += 1;
+        const backoffMs = Math.min(5000, 800 * attempt);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+    }
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) {
+    throw new Error("No email provider configured");
+  }
+  await sendWithRetry(transporter, mailOptions, retries);
 }
 
 function getLogoAttachment() {
@@ -132,7 +233,6 @@ function makeEmailLayout({ heading, introHtml, bodyHtml, closing }) {
 }
 
 async function sendOrderEmail(orderPayload) {
-  const transporter = getTransporter();
   const ownerEmailRaw = process.env.OWNER_EMAIL || process.env.ADMIN_EMAIL || "";
   const ownerEmails = ownerEmailRaw
     .split(",")
@@ -153,14 +253,14 @@ async function sendOrderEmail(orderPayload) {
     closing: "Please review the order and update status from the admin panel."
   });
 
-  if (!transporter) {
-    console.log("SMTP config missing. Email content below:");
+  if (!hasEmailConfig()) {
+    console.log("Email provider config missing. Email content below:");
     console.log(lines.join("\n"));
     return;
   }
 
-  await sendWithRetry(transporter, {
-    from: process.env.SMTP_USER,
+  await sendMailWithProvider({
+    from: getFromAddress(),
     to: ownerEmails.join(","),
     subject,
     text: lines.join("\n"),
@@ -253,7 +353,6 @@ function buildOrderDetailsHtml(orderPayload, { showCustomer }) {
 }
 
 async function sendCustomerOrderEmail(orderPayload) {
-  const transporter = getTransporter();
   const customerEmail = orderPayload.customerEmail;
 
   if (!customerEmail) {
@@ -277,14 +376,14 @@ async function sendCustomerOrderEmail(orderPayload) {
     closing: "You will receive delivery status updates on this email. Thank you for shopping with us."
   });
 
-  if (!transporter) {
-    console.log(`SMTP config missing. Customer order email not sent to ${customerEmail}.`);
+  if (!hasEmailConfig()) {
+    console.log(`Email provider config missing. Customer order email not sent to ${customerEmail}.`);
     console.log(lines.join("\n"));
     return;
   }
 
-  await sendWithRetry(transporter, {
-    from: process.env.SMTP_USER,
+  await sendMailWithProvider({
+    from: getFromAddress(),
     to: customerEmail,
     subject,
     text: lines.join("\n"),
@@ -294,8 +393,6 @@ async function sendCustomerOrderEmail(orderPayload) {
 }
 
 async function sendPasswordResetEmail({ toEmail, resetLink, tokenForDev }) {
-  const transporter = getTransporter();
-
   const subject = "My Farms Password Reset";
   const text = [
     "You requested a password reset for your My Farms account.",
@@ -319,15 +416,15 @@ async function sendPasswordResetEmail({ toEmail, resetLink, tokenForDev }) {
     closing: "If you did not request this, you can safely ignore this email."
   });
 
-  if (!transporter) {
+  if (!hasEmailConfig()) {
     console.log(`Password reset requested for ${toEmail}.`);
     console.log(`Reset link: ${resetLink}`);
     console.log(`Reset token (dev): ${tokenForDev}`);
     return;
   }
 
-  await sendWithRetry(transporter, {
-    from: process.env.SMTP_USER,
+  await sendMailWithProvider({
+    from: getFromAddress(),
     to: toEmail,
     subject,
     text,
@@ -339,7 +436,6 @@ async function sendPasswordResetEmail({ toEmail, resetLink, tokenForDev }) {
 async function sendOrderStatusEmail({ toEmail, customerName, orderId, status, cancelNote }) {
   if (!toEmail) return;
 
-  const transporter = getTransporter();
   const statusLabel =
     status === "OUT_FOR_DELIVERY"
       ? "Out for Delivery"
@@ -387,14 +483,14 @@ async function sendOrderStatusEmail({ toEmail, customerName, orderId, status, ca
     closing: "Thank you for trusting My Farms for your fresh groceries."
   });
 
-  if (!transporter) {
-    console.log(`SMTP config missing. Status email not sent to ${toEmail}.`);
+  if (!hasEmailConfig()) {
+    console.log(`Email provider config missing. Status email not sent to ${toEmail}.`);
     console.log(text);
     return;
   }
 
-  await sendWithRetry(transporter, {
-    from: process.env.SMTP_USER,
+  await sendMailWithProvider({
+    from: getFromAddress(),
     to: toEmail,
     subject,
     text,
@@ -404,7 +500,6 @@ async function sendOrderStatusEmail({ toEmail, customerName, orderId, status, ca
 }
 
 async function sendComplaintCreatedEmails({ complaintId, orderNumber, issue, customerName, customerEmail }) {
-  const transporter = getTransporter();
   const ownerEmail = process.env.OWNER_EMAIL || process.env.ADMIN_EMAIL;
   const ticketId = String(complaintId || "").slice(-6).toUpperCase();
   const safeOrderNumber = String(orderNumber || "").trim() || "N/A";
@@ -458,8 +553,8 @@ async function sendComplaintCreatedEmails({ complaintId, orderNumber, issue, cus
     closing: "Issue reported to customer representative and we will respond very shortly."
   });
 
-  if (!transporter) {
-    console.log("SMTP config missing. Complaint emails not sent.");
+  if (!hasEmailConfig()) {
+    console.log("Email provider config missing. Complaint emails not sent.");
     if (ownerEmail) console.log(`Owner email preview:\n${ownerText}`);
     console.log(`Customer email preview (${customerEmail}):\n${customerText}`);
     return;
@@ -468,8 +563,8 @@ async function sendComplaintCreatedEmails({ complaintId, orderNumber, issue, cus
   const jobs = [];
   if (ownerEmail) {
     jobs.push(
-      sendWithRetry(transporter, {
-        from: process.env.SMTP_USER,
+      sendMailWithProvider({
+        from: getFromAddress(),
         to: ownerEmail,
         subject: ownerSubject,
         text: ownerText,
@@ -479,8 +574,8 @@ async function sendComplaintCreatedEmails({ complaintId, orderNumber, issue, cus
     );
   }
   jobs.push(
-    sendWithRetry(transporter, {
-      from: process.env.SMTP_USER,
+    sendMailWithProvider({
+      from: getFromAddress(),
       to: customerEmail,
       subject: customerSubject,
       text: customerText,
@@ -494,7 +589,6 @@ async function sendComplaintCreatedEmails({ complaintId, orderNumber, issue, cus
 
 async function sendComplaintClosedEmail({ toEmail, customerName, complaintId, orderNumber, closingNote }) {
   if (!toEmail) return;
-  const transporter = getTransporter();
   const ticketId = String(complaintId || "").slice(-6).toUpperCase();
   const safeOrderNumber = String(orderNumber || "").trim() || "N/A";
   const subject = `Complaint Closed #${ticketId}`;
@@ -524,14 +618,14 @@ async function sendComplaintClosedEmail({ toEmail, customerName, complaintId, or
     closing: "This ticket is now closed. Thank you for your patience."
   });
 
-  if (!transporter) {
-    console.log(`SMTP config missing. Complaint closed email not sent to ${toEmail}.`);
+  if (!hasEmailConfig()) {
+    console.log(`Email provider config missing. Complaint closed email not sent to ${toEmail}.`);
     console.log(text);
     return;
   }
 
-  await sendWithRetry(transporter, {
-    from: process.env.SMTP_USER,
+  await sendMailWithProvider({
+    from: getFromAddress(),
     to: toEmail,
     subject,
     text,
@@ -543,7 +637,6 @@ async function sendComplaintClosedEmail({ toEmail, customerName, complaintId, or
 async function sendWelcomeEmail({ toEmail, customerName }) {
   if (!toEmail) return;
 
-  const transporter = getTransporter();
   const subject = "Welcome to My Farms";
   const text = [
     `Hi ${customerName || "Customer"},`,
@@ -564,13 +657,13 @@ async function sendWelcomeEmail({ toEmail, customerName }) {
     closing: "Thank you for choosing My Farms."
   });
 
-  if (!transporter) {
-    console.log(`SMTP config missing. Welcome email not sent to ${toEmail}.`);
+  if (!hasEmailConfig()) {
+    console.log(`Email provider config missing. Welcome email not sent to ${toEmail}.`);
     return;
   }
 
-  await sendWithRetry(transporter, {
-    from: process.env.SMTP_USER,
+  await sendMailWithProvider({
+    from: getFromAddress(),
     to: toEmail,
     subject,
     text,
