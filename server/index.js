@@ -157,6 +157,32 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function runInBackground(task, label) {
+  setImmediate(async () => {
+    try {
+      await task();
+    } catch (err) {
+      console.error(`${label}:`, err && err.message ? err.message : err);
+    }
+  });
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -278,11 +304,10 @@ app.post("/api/auth/signup", async (req, res) => {
 
     req.session.user = { id: String(user._id), name: user.name, email: user.email, mobileNumber: user.mobileNumber || "" };
 
-    try {
-      await sendWelcomeEmail({ toEmail: user.email, customerName: user.name });
-    } catch (mailErr) {
-      console.error("Signup succeeded but welcome email failed:", mailErr.message);
-    }
+    runInBackground(
+      () => withTimeout(sendWelcomeEmail({ toEmail: user.email, customerName: user.name }), 15000, "Welcome email"),
+      "Signup succeeded but welcome email failed"
+    );
 
     res.status(201).json({ user: req.session.user });
   } catch (err) {
@@ -1130,23 +1155,6 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       await models.PromoCode.updateOne({ _id: promo._id }, { $inc: { usedCount: 1 } });
     }
 
-    const emailErrors = [];
-    try {
-      await sendOrderEmail(emailPayload);
-    } catch (ownerErr) {
-      emailErrors.push(ownerErr && ownerErr.message ? `owner: ${ownerErr.message}` : "owner: Unknown email error");
-    }
-    try {
-      await sendCustomerOrderEmail(emailPayload);
-    } catch (customerErr) {
-      emailErrors.push(customerErr && customerErr.message ? `customer: ${customerErr.message}` : "customer: Unknown email error");
-    }
-
-    if (emailErrors.length) {
-      const reasons = emailErrors;
-      console.error("Order created but some emails failed:", reasons.join(" | "));
-    }
-
     res.status(201).json({
       orderId: String(order._id),
       subtotalAmount: order.subtotalAmount,
@@ -1155,6 +1163,21 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       totalAmount: finalTotal,
       status: "PLACED"
     });
+
+    runInBackground(async () => {
+      const results = await Promise.allSettled([
+        withTimeout(sendOrderEmail(emailPayload), 15000, "Owner order email"),
+        withTimeout(sendCustomerOrderEmail(emailPayload), 15000, "Customer order email")
+      ]);
+      const failures = results
+        .filter((result) => result.status === "rejected")
+        .map((result) => (result.reason && result.reason.message ? result.reason.message : "Unknown email error"));
+      if (failures.length) {
+        console.error("Order created but some emails failed:", failures.join(" | "));
+      }
+    }, "Order email background job failed");
+
+    return;
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not create order" });
@@ -1456,19 +1479,25 @@ async function updateOrderStatusHandler(req, res) {
     order.cancelNote = status === "CANCELED" ? cancelNote : null;
     await order.save();
 
-    try {
-      await sendOrderStatusEmail({
-        toEmail: order.customerEmail,
-        customerName: order.customerName,
-        orderId: String(order._id),
-        status,
-        cancelNote: order.cancelNote
-      });
-    } catch (err) {
-      console.error("Order status updated but status email failed:", err.message);
-    }
-
     res.json({ ok: true, status: order.status });
+
+    runInBackground(
+      () =>
+        withTimeout(
+          sendOrderStatusEmail({
+            toEmail: order.customerEmail,
+            customerName: order.customerName,
+            orderId: String(order._id),
+            status,
+            cancelNote: order.cancelNote
+          }),
+          15000,
+          "Order status email"
+        ),
+      "Order status updated but status email failed"
+    );
+
+    return;
   } catch (err) {
     console.error("Failed to update order status:", err.message);
     res.status(500).json({ error: "Could not update order status" });
