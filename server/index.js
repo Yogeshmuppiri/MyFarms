@@ -4,7 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
+const MongoStoreModule = require("connect-mongo");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { v2: cloudinary } = require("cloudinary");
@@ -31,6 +31,7 @@ const ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const TAX_RATE = 0.05;
 const ORDER_RETENTION_DAYS = 60;
 const COMPLAINT_RETENTION_DAYS = 30;
+const MongoStore = MongoStoreModule && MongoStoreModule.default ? MongoStoreModule.default : MongoStoreModule;
 
 const hasCloudinaryConfig = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
