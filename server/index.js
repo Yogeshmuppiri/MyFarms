@@ -39,6 +39,10 @@ const hasCloudinaryConfig = Boolean(
   process.env.CLOUDINARY_API_SECRET
 );
 
+// Render/other PaaS terminate HTTPS at a reverse proxy.
+// Trust first proxy so secure session cookies are set correctly in production.
+app.set("trust proxy", 1);
+
 if (hasCloudinaryConfig) {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
