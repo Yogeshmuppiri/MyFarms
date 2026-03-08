@@ -4,8 +4,10 @@ const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
+const MongoStore = require("connect-mongo");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
+const { v2: cloudinary } = require("cloudinary");
 const { initDb, models } = require("./db");
 const {
   sendOrderEmail,
@@ -30,14 +32,36 @@ const TAX_RATE = 0.05;
 const ORDER_RETENTION_DAYS = 60;
 const COMPLAINT_RETENTION_DAYS = 30;
 
+const hasCloudinaryConfig = Boolean(
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET
+);
+
+if (hasCloudinaryConfig) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    secure: true
+  });
+}
+
 app.use(express.json());
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "myfarms_dev_secret",
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI || "mongodb://127.0.0.1:27017/myfarms",
+      collectionName: "sessions",
+      ttl: 60 * 60 * 24
+    }),
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
+      sameSite: "lax",
+      secure: String(process.env.NODE_ENV || "").toLowerCase() === "production",
       maxAge: 1000 * 60 * 60 * 24
     }
   })
@@ -47,21 +71,51 @@ app.use(express.static(publicDir, { index: false }));
 app.use(express.static(reactDistDir));
 app.use("/resources", express.static(resourceDir));
 
-const imageStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, resourceDir),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const base = path
-      .basename(file.originalname || "product", ext)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "product";
-    cb(null, `${base}-${Date.now()}${ext}`);
+function toSafeBaseName(fileName, fallback = "file") {
+  const ext = path.extname(fileName || "").toLowerCase();
+  const base = path
+    .basename(fileName || fallback, ext)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || fallback;
+}
+
+function isRemoteUrl(value) {
+  return /^https?:\/\//i.test(String(value || ""));
+}
+
+async function uploadBufferToCloudinary(file, folder = "myfarms") {
+  const ext = path.extname(file.originalname || "").toLowerCase() || ".jpg";
+  const publicId = `${toSafeBaseName(file.originalname, "upload")}-${Date.now()}`;
+  const dataUri = `data:${file.mimetype || "image/jpeg"};base64,${file.buffer.toString("base64")}`;
+
+  const result = await cloudinary.uploader.upload(dataUri, {
+    folder,
+    public_id: publicId,
+    overwrite: false,
+    resource_type: "image"
+  });
+
+  return result.secure_url;
+}
+
+async function persistUpload(file, { folder = "myfarms", localPrefix = "upload" } = {}) {
+  if (!file) return null;
+
+  if (hasCloudinaryConfig) {
+    return uploadBufferToCloudinary(file, folder);
   }
-});
+
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  const localName = `${toSafeBaseName(file.originalname, localPrefix)}-${Date.now()}${ext}`;
+  const localPath = path.join(resourceDir, localName);
+  await fs.promises.writeFile(localPath, file.buffer);
+  return localName;
+}
 
 const uploadImage = multer({
-  storage: imageStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname || "").toLowerCase();
@@ -73,7 +127,7 @@ const uploadImage = multer({
 });
 
 const uploadComplaintImage = multer({
-  storage: imageStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname || "").toLowerCase();
@@ -512,7 +566,9 @@ app.put("/api/admin/products/:id", requireAdmin, (req, res) => {
       product.stock = nextStock;
       product.featured = nextFeatured;
       product.forceOutOfStock = nextForceOutOfStock;
-      if (req.file) product.imagePath = req.file.filename;
+      if (req.file) {
+        product.imagePath = await persistUpload(req.file, { folder: "myfarms/products", localPrefix: "product" });
+      }
       await product.save();
 
       res.json({ ok: true });
@@ -875,7 +931,9 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
         variantsPayload = [];
       }
 
-      const imagePath = req.file ? req.file.filename : null;
+      const imagePath = req.file
+        ? await persistUpload(req.file, { folder: "myfarms/products", localPrefix: "product" })
+        : null;
 
       const product = await models.Product.create({
         name,
@@ -1181,7 +1239,9 @@ app.post("/api/complaints", requireAuth, (req, res) => {
         orderId: matchedOrder._id,
         orderNumber: displayOrderNumber,
         issue,
-        proofImagePath: req.file ? req.file.filename : null,
+        proofImagePath: req.file
+          ? await persistUpload(req.file, { folder: "myfarms/complaints", localPrefix: "complaint" })
+          : null,
         customerName: req.session.user.name,
         customerEmail: req.session.user.email
       });

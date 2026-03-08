@@ -104,6 +104,13 @@ async function api(path, options = {}) {
   }
 }
 
+function resolveAssetUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `/resources/${encodeURIComponent(raw)}`;
+}
+
 function toast(msg) {
   els.toast.textContent = msg;
   els.toast.classList.remove("hidden");
@@ -500,7 +507,7 @@ async function renderComplaints() {
         <div class="meta">${new Date(c.createdAt).toLocaleString()} | Order ${c.orderNumber}</div>
         <div class="meta">Customer: ${c.customerName} | ${c.customerEmail}</div>
         <div class="meta"><strong>Issue:</strong> ${c.issue}</div>
-        ${c.proofImagePath ? `<div class="meta"><a href="/resources/${encodeURIComponent(c.proofImagePath)}" target="_blank" rel="noreferrer">View Proof Photo</a></div>` : ""}
+        ${c.proofImagePath ? `<div class="meta"><a href="${resolveAssetUrl(c.proofImagePath)}" target="_blank" rel="noreferrer">View Proof Photo</a></div>` : ""}
         <div class="meta"><strong>Timeline:</strong> ${(c.timeline || [])
           .map((t) => `${t.label} (${new Date(t.at).toLocaleString()})`)
           .join(" -> ")}</div>

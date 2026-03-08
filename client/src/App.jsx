@@ -34,6 +34,13 @@ function normalizeToken(value) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function resolveAssetUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `/resources/${encodeURIComponent(raw)}`;
+}
+
 function getProductImagePath(productName, files) {
   if (!files?.length) return "";
 
@@ -285,9 +292,7 @@ export default function App() {
   }
 
   function renderProductCard(p) {
-    const imagePath = p.imagePath
-      ? `/resources/${encodeURIComponent(p.imagePath)}`
-      : getProductImagePath(p.name, imageFiles);
+    const imagePath = p.imagePath ? resolveAssetUrl(p.imagePath) : getProductImagePath(p.name, imageFiles);
 
     return (
       <article className="product-card" key={p.id}>
@@ -414,9 +419,84 @@ export default function App() {
     }
   }, [checkout.promoCode, cartSubtotal]);
 
+  useEffect(() => {
+    const nodes = Array.from(document.querySelectorAll(".reveal-on-scroll"));
+    if (!nodes.length) return undefined;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { threshold: 0.14, rootMargin: "0px 0px -8% 0px" }
+    );
+
+    nodes.forEach((n) => observer.observe(n));
+    return () => observer.disconnect();
+  }, [isInitialLoading, filteredProducts.length, orders.length, complaints.length]);
+
   return (
     <>
       <header className="hero">
+        <div className="hero-ambient" aria-hidden="true">
+          <div className="sun-glow" />
+          <div className="sun-rays" />
+          <span className="cloud cloud-a" />
+          <span className="cloud cloud-b" />
+          <span className="cloud cloud-c" />
+          <span className="pollen p1" />
+          <span className="pollen p2" />
+          <span className="pollen p3" />
+          <span className="pollen p4" />
+          <span className="pollen p5" />
+          <span className="pollen p6" />
+        </div>
+        <div className="hero-crops" aria-hidden="true">
+          <svg className="farmscape-svg" viewBox="0 0 1600 220" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="fieldGreen" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="#9fd37f" />
+                <stop offset="100%" stopColor="#4e9e58" />
+              </linearGradient>
+              <linearGradient id="fieldDark" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0%" stopColor="#2f7d46" />
+                <stop offset="100%" stopColor="#1f5e35" />
+              </linearGradient>
+              <linearGradient id="pathSoil" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0%" stopColor="#dfcc8f" />
+                <stop offset="100%" stopColor="#c7aa66" />
+              </linearGradient>
+            </defs>
+
+            <path d="M0 130 C160 105 280 148 430 128 C650 99 740 148 880 130 C1045 108 1140 150 1300 134 C1420 122 1510 146 1600 134 L1600 220 L0 220 Z" fill="url(#fieldGreen)" />
+            <path d="M0 162 C180 136 300 186 500 158 C690 131 840 182 1030 156 C1230 128 1410 182 1600 160 L1600 220 L0 220 Z" fill="#76bb64" opacity="0.95" />
+            <path d="M0 186 C230 170 410 218 640 193 C900 165 1160 220 1600 192 L1600 220 L0 220 Z" fill="url(#fieldDark)" />
+
+            <path d="M520 220 C580 182 672 184 742 220 Z" fill="url(#pathSoil)" />
+            <path d="M560 220 C626 194 676 194 724 220 Z" fill="#e8daaa" opacity="0.6" />
+
+            <g transform="translate(942 42)">
+              <rect x="0" y="44" width="4" height="58" fill="#67826f" />
+              <g className="windmill-blades">
+                <polygon points="2,44 -20,24 -8,20 4,38" fill="#1f2622" />
+                <polygon points="2,44 24,24 12,20 0,38" fill="#1f2622" />
+                <polygon points="2,44 -20,64 -8,68 4,50" fill="#1f2622" />
+                <polygon points="2,44 24,64 12,68 0,50" fill="#1f2622" />
+              </g>
+            </g>
+
+            <g transform="translate(380 74)">
+              <ellipse cx="30" cy="64" rx="34" ry="24" fill="#2e7e45" />
+              <ellipse cx="56" cy="52" rx="26" ry="20" fill="#4c9d4f" />
+              <ellipse cx="14" cy="50" rx="24" ry="18" fill="#62b35a" />
+              <rect x="26" y="68" width="8" height="24" fill="#775338" />
+            </g>
+          </svg>
+        </div>
         <nav className={`topnav ${isNavCompact ? "compact" : ""}`}>
           <div className="brand">
             <img src="/myfarmslogo.png" alt="My Farms logo" className="brand-logo" />
@@ -483,7 +563,7 @@ export default function App() {
       </header>
 
       <main>
-        <section className="controls" id="shopSection">
+        <section className="controls reveal-on-scroll" id="shopSection">
           <h2>Shop Products</h2>
           <div className="controls-right">
             <input
@@ -519,7 +599,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="content-grid">
+        <section className="content-grid reveal-on-scroll">
           <div>
             {isInitialLoading ? (
               <div className="products-grid skeleton-grid">
@@ -528,7 +608,7 @@ export default function App() {
                 ))}
               </div>
             ) : selectedCategory === "All" && !featuredOnly && featuredProducts.length ? (
-              <section className="category-section">
+              <section className="category-section reveal-on-scroll">
                 <h3>Featured Products</h3>
                 <div className="products-grid">{featuredProducts.map((p) => renderProductCard(p))}</div>
               </section>
@@ -536,7 +616,7 @@ export default function App() {
 
             {!isInitialLoading && selectedCategory === "All" ? (
               productsByCategory.map(([categoryName, items]) => (
-                <section className="category-section" key={categoryName}>
+                <section className="category-section reveal-on-scroll" key={categoryName}>
                   <h3>{categoryName}</h3>
                   <div className="products-grid">{items.map((p) => renderProductCard(p))}</div>
                 </section>
@@ -624,7 +704,7 @@ export default function App() {
           </aside>
         </section>
 
-        <section className="orders-section">
+        <section className="orders-section reveal-on-scroll">
           <h3>My Orders</h3>
           {!user ? <p className="muted small">Login to view your orders.</p> : null}
           {user ? (
@@ -685,7 +765,7 @@ export default function App() {
                     <div className="small">Issue: {c.issue}</div>
                     {c.proofImagePath ? (
                       <div className="small">
-                        <a href={`/resources/${encodeURIComponent(c.proofImagePath)}`} target="_blank" rel="noreferrer">
+                        <a href={resolveAssetUrl(c.proofImagePath)} target="_blank" rel="noreferrer">
                           View Uploaded Proof
                         </a>
                       </div>

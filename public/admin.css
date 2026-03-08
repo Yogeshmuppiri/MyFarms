@@ -250,6 +250,20 @@ button:hover {
 }
 
 @media (max-width: 860px) {
+  .head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.55rem;
+  }
+
+  #adminActions {
+    width: 100%;
+  }
+
+  #adminActions button {
+    width: 100%;
+  }
+
   .split {
     grid-template-columns: 1fr;
   }
@@ -260,5 +274,11 @@ button:hover {
 
   .variant-row {
     grid-template-columns: 1fr;
+  }
+
+  .toast {
+    left: 0.8rem;
+    right: 0.8rem;
+    bottom: 0.8rem;
   }
 }
