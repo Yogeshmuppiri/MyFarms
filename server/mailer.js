@@ -7,12 +7,16 @@ function hasRawSmtpConfig() {
   return !!(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
+function hasBrevoConfig() {
+  return !!process.env.BREVO_API_KEY;
+}
+
 function hasResendConfig() {
   return !!process.env.RESEND_API_KEY;
 }
 
 function hasEmailConfig() {
-  return hasResendConfig() || hasRawSmtpConfig();
+  return hasBrevoConfig() || hasResendConfig() || hasRawSmtpConfig();
 }
 
 function hasSmtpConfig() {
@@ -22,7 +26,7 @@ function hasSmtpConfig() {
 }
 
 function getFromAddress() {
-  return process.env.MAIL_FROM || process.env.SMTP_USER || "My Farms <onboarding@resend.dev>";
+  return process.env.MAIL_FROM || process.env.SMTP_USER || "My Farms <no-reply@example.com>";
 }
 
 function createTransporter() {
@@ -151,6 +155,47 @@ async function sendViaResend(mailOptions) {
   }
 }
 
+async function sendViaBrevo(mailOptions) {
+  const to = parseRecipients(mailOptions.to).map((email) => ({ email }));
+  if (!to.length) return;
+
+  const fromRaw = String(mailOptions.from || getFromAddress());
+  const fromMatch = fromRaw.match(/^\s*(?:"?([^"<]*)"?\s*)?<([^>]+)>\s*$/);
+  const sender = fromMatch
+    ? { name: String(fromMatch[1] || "").trim() || "My Farms", email: String(fromMatch[2] || "").trim() }
+    : { name: "My Farms", email: fromRaw.trim() };
+
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": process.env.BREVO_API_KEY,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({
+      sender,
+      to,
+      subject: mailOptions.subject || "",
+      textContent: mailOptions.text || "",
+      htmlContent: normalizeHtmlForApi(mailOptions.html || "")
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    const err = new Error(`Brevo API error (${response.status}): ${body || response.statusText}`);
+    err.status = response.status;
+    throw err;
+  }
+}
+
+function isTransientBrevoError(err) {
+  const status = Number(err && err.status);
+  if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+  const msg = String((err && err.message) || "").toUpperCase();
+  return msg.includes("TIMED OUT") || msg.includes("ECONNRESET") || msg.includes("FETCH FAILED");
+}
+
 function isTransientResendError(err) {
   const status = Number(err && err.status);
   if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return true;
@@ -159,6 +204,21 @@ function isTransientResendError(err) {
 }
 
 async function sendMailWithProvider(mailOptions, retries = 3) {
+  if (hasBrevoConfig()) {
+    let attempt = 0;
+    while (true) {
+      try {
+        await sendViaBrevo(mailOptions);
+        return;
+      } catch (err) {
+        if (attempt >= retries || !isTransientBrevoError(err)) throw err;
+        attempt += 1;
+        const backoffMs = Math.min(5000, 800 * attempt);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+    }
+  }
+
   if (hasResendConfig()) {
     let attempt = 0;
     while (true) {
