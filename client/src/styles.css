@@ -936,7 +936,39 @@ select {
   }
 
   .products-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+
+  .product-card {
+    padding: 0.58rem;
+    border-radius: 14px;
+  }
+
+  .product-image {
+    height: 96px;
+    border-radius: 10px;
+  }
+
+  .product-card h4 {
+    margin: 0.12rem 0 0;
+    font-size: 1.05rem;
+  }
+
+  .price {
+    font-size: 0.76rem;
+    margin: 0.02rem 0 0.18rem;
+  }
+
+  .badge,
+  .stock-badge {
+    font-size: 0.66rem;
+    padding: 0.16rem 0.42rem;
+  }
+
+  .product-card .btn-primary {
+    padding: 0.48rem 0.58rem;
+    font-size: 0.9rem;
   }
 
   .modal {
