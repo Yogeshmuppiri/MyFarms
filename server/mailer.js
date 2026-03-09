@@ -11,12 +11,8 @@ function hasBrevoConfig() {
   return !!process.env.BREVO_API_KEY;
 }
 
-function hasResendConfig() {
-  return !!process.env.RESEND_API_KEY;
-}
-
 function hasEmailConfig() {
-  return hasBrevoConfig() || hasResendConfig() || hasRawSmtpConfig();
+  return hasBrevoConfig() || hasRawSmtpConfig();
 }
 
 function hasSmtpConfig() {
@@ -128,33 +124,6 @@ function normalizeHtmlForApi(html) {
   return raw.replace(/cid:myfarms-logo/gi, logoUrl);
 }
 
-async function sendViaResend(mailOptions) {
-  const to = parseRecipients(mailOptions.to);
-  if (!to.length) return;
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: mailOptions.from || getFromAddress(),
-      to,
-      subject: mailOptions.subject || "",
-      text: mailOptions.text || "",
-      html: normalizeHtmlForApi(mailOptions.html || "")
-    })
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    const err = new Error(`Resend API error (${response.status}): ${body || response.statusText}`);
-    err.status = response.status;
-    throw err;
-  }
-}
-
 async function sendViaBrevo(mailOptions) {
   const to = parseRecipients(mailOptions.to).map((email) => ({ email }));
   if (!to.length) return;
@@ -196,13 +165,6 @@ function isTransientBrevoError(err) {
   return msg.includes("TIMED OUT") || msg.includes("ECONNRESET") || msg.includes("FETCH FAILED");
 }
 
-function isTransientResendError(err) {
-  const status = Number(err && err.status);
-  if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return true;
-  const msg = String((err && err.message) || "").toUpperCase();
-  return msg.includes("TIMED OUT") || msg.includes("ECONNRESET") || msg.includes("FETCH FAILED");
-}
-
 async function sendMailWithProvider(mailOptions, retries = 3) {
   if (hasBrevoConfig()) {
     let attempt = 0;
@@ -212,21 +174,6 @@ async function sendMailWithProvider(mailOptions, retries = 3) {
         return;
       } catch (err) {
         if (attempt >= retries || !isTransientBrevoError(err)) throw err;
-        attempt += 1;
-        const backoffMs = Math.min(5000, 800 * attempt);
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-      }
-    }
-  }
-
-  if (hasResendConfig()) {
-    let attempt = 0;
-    while (true) {
-      try {
-        await sendViaResend(mailOptions);
-        return;
-      } catch (err) {
-        if (attempt >= retries || !isTransientResendError(err)) throw err;
         attempt += 1;
         const backoffMs = Math.min(5000, 800 * attempt);
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
