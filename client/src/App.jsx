@@ -181,6 +181,7 @@ export default function App() {
   }, [filteredProducts, selectedCategory]);
 
   const featuredProducts = useMemo(() => filteredProducts.filter((p) => p.featured), [filteredProducts]);
+  const groupedProductsAvailable = selectedCategory === "All" && productsByCategory.length > 0;
 
   const cartSubtotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
   const parsedTip = Number(checkout.tipAmount || 0);
@@ -192,6 +193,21 @@ export default function App() {
   function showToast(message) {
     setToast(message);
     setTimeout(() => setToast(""), 2600);
+  }
+
+  async function logoutUser(message = "Logged out") {
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Ignore logout API failures; client state should still clear.
+    }
+    setUser(null);
+    setOrders([]);
+    setComplaints([]);
+    setShowOrderHistory(false);
+    setShowMyComplaints(false);
+    setCheckout((prev) => ({ ...prev, fullName: "", contactNumber: "" }));
+    showToast(message);
   }
 
   function addToCart(product, variant = null) {
@@ -414,6 +430,28 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    if (!user) return undefined;
+    const IDLE_MS = 30 * 60 * 1000;
+    let timer = null;
+
+    const resetIdleTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        logoutUser("Logged out due to 30 minutes of inactivity");
+      }, IDLE_MS);
+    };
+
+    const activityEvents = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetIdleTimer, { passive: true }));
+    resetIdleTimer();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetIdleTimer));
+    };
+  }, [user]);
+
+  useEffect(() => {
     if (!checkout.promoCode.trim()) {
       setPromoPreview({ valid: false, code: "", discountAmount: 0, message: "No promo applied" });
     }
@@ -513,14 +551,7 @@ export default function App() {
                   </button>
                   <button
                     className="btn-ghost"
-                    onClick={async () => {
-                      await api("/api/auth/logout", { method: "POST" });
-                      setUser(null);
-                      setOrders([]);
-                      setComplaints([]);
-                      setCheckout((prev) => ({ ...prev, fullName: "", contactNumber: "" }));
-                      showToast("Logged out");
-                    }}
+                    onClick={() => logoutUser("Logged out")}
                   >
                     Logout
                   </button>
@@ -608,15 +639,15 @@ export default function App() {
                 ))}
               </div>
             ) : selectedCategory === "All" && !featuredOnly && featuredProducts.length ? (
-              <section className="category-section reveal-on-scroll">
+              <section className="category-section">
                 <h3>Featured Products</h3>
                 <div className="products-grid">{featuredProducts.map((p) => renderProductCard(p))}</div>
               </section>
             ) : null}
 
-            {!isInitialLoading && selectedCategory === "All" ? (
+            {!isInitialLoading && groupedProductsAvailable ? (
               productsByCategory.map(([categoryName, items]) => (
-                <section className="category-section reveal-on-scroll" key={categoryName}>
+                <section className="category-section" key={categoryName}>
                   <h3>{categoryName}</h3>
                   <div className="products-grid">{items.map((p) => renderProductCard(p))}</div>
                 </section>

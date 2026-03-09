@@ -61,13 +61,14 @@ app.use(
       collectionName: "sessions",
       ttl: 60 * 60 * 24
     }),
+    rolling: true,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: "lax",
       secure: String(process.env.NODE_ENV || "").toLowerCase() === "production",
-      maxAge: 1000 * 60 * 60 * 24
+      maxAge: Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 30)
     }
   })
 );

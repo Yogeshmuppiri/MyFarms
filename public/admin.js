@@ -111,10 +111,31 @@ function resolveAssetUrl(value) {
   return `/resources/${encodeURIComponent(raw)}`;
 }
 
-function toast(msg) {
+let toastTimer = null;
+
+function toast(msg, options = {}) {
+  const persistent = Boolean(options.persistent);
+  const type = options.type || "info";
+  if (toastTimer) clearTimeout(toastTimer);
+
+  els.toast.classList.remove("hidden", "toast-error", "toast-success");
+  if (type === "error") els.toast.classList.add("toast-error");
+  if (type === "success") els.toast.classList.add("toast-success");
+
+  if (persistent) {
+    els.toast.innerHTML = `
+      <div class="toast-row">
+        <span>${msg}</span>
+        <button type="button" class="toast-close" aria-label="Close notification">x</button>
+      </div>
+    `;
+    const closeBtn = els.toast.querySelector(".toast-close");
+    if (closeBtn) closeBtn.onclick = () => els.toast.classList.add("hidden");
+    return;
+  }
+
   els.toast.textContent = msg;
-  els.toast.classList.remove("hidden");
-  setTimeout(() => els.toast.classList.add("hidden"), 2400);
+  toastTimer = setTimeout(() => els.toast.classList.add("hidden"), 3000);
 }
 
 function setButtonLoading(button, loading, loadingText = "Please wait...") {
@@ -225,6 +246,16 @@ function setupPanelAccordion() {
   });
 
   panelAccordionInitialized = true;
+}
+
+function openPanelSectionByContentId(contentId) {
+  const body = document.getElementById(contentId);
+  if (!body) return;
+  const section = body.closest("#panelCard > section.card");
+  if (!section) return;
+  const all = Array.from(document.querySelectorAll("#panelCard > section.card"));
+  all.forEach((s) => s.classList.remove("expanded"));
+  section.classList.add("expanded");
 }
 
 function statusLabel(status) {
@@ -470,7 +501,8 @@ function startOrderPolling() {
 
       if (hasNewOrder) {
         addOrderAlerts(newOrders);
-        toast("New order received");
+        openPanelSectionByContentId("newOrderAlerts");
+        toast(`New order received (${newOrders.length})`, { persistent: true, type: "success" });
         if ("Notification" in window) {
           if (Notification.permission === "granted") {
             new Notification("My Farms Admin", { body: "New order received." });
