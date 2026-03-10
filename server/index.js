@@ -31,6 +31,7 @@ const ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const TAX_RATE = 0.05;
 const ORDER_RETENTION_DAYS = 60;
 const COMPLAINT_RETENTION_DAYS = 30;
+const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 30);
 const MongoStore = MongoStoreModule && MongoStoreModule.default ? MongoStoreModule.default : MongoStoreModule;
 
 const hasCloudinaryConfig = Boolean(
@@ -68,10 +69,25 @@ app.use(
       httpOnly: true,
       sameSite: "lax",
       secure: String(process.env.NODE_ENV || "").toLowerCase() === "production",
-      maxAge: Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 30)
+      maxAge: SESSION_IDLE_MS
     }
   })
 );
+
+app.use((req, _res, next) => {
+  if (!req.session) return next();
+  const now = Date.now();
+  const lastActivityAt = Number(req.session.lastActivityAt || now);
+  const isAuthed = Boolean(req.session.user || req.session.admin);
+
+  if (isAuthed && now - lastActivityAt > SESSION_IDLE_MS) {
+    req.session.user = null;
+    req.session.admin = null;
+  }
+
+  req.session.lastActivityAt = now;
+  next();
+});
 
 app.use(express.static(publicDir, { index: false }));
 app.use(express.static(reactDistDir));

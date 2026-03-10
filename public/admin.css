@@ -187,7 +187,7 @@ button:hover {
 }
 
 .toast {
-  position: fixed;
+  position: fixed !important;
   top: 1rem;
   left: 50%;
   transform: translateX(-50%);
@@ -196,9 +196,10 @@ button:hover {
   border-radius: 10px;
   padding: 0.6rem 0.8rem;
   box-shadow: 0 10px 24px rgba(15, 44, 25, 0.28);
-  z-index: 9999;
+  z-index: 2147483647;
   min-width: min(92vw, 420px);
   max-width: min(92vw, 720px);
+  pointer-events: auto;
 }
 
 .toast-success {

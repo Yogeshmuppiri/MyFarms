@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 async function api(path, options = {}) {
   const isFormData = options.body instanceof FormData;
@@ -130,6 +130,7 @@ export default function App() {
   const [isProfileSubmitting, setIsProfileSubmitting] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isComplaintSubmitting, setIsComplaintSubmitting] = useState(false);
+  const lastActivityRef = useRef(Date.now());
 
   const [variantProduct, setVariantProduct] = useState(null);
 
@@ -170,18 +171,7 @@ export default function App() {
     return result;
   }, [products, selectedCategory, featuredOnly, searchQuery, sortBy]);
 
-  const productsByCategory = useMemo(() => {
-    if (selectedCategory !== "All") return [];
-    const grouped = new Map();
-    for (const p of filteredProducts) {
-      if (!grouped.has(p.category)) grouped.set(p.category, []);
-      grouped.get(p.category).push(p);
-    }
-    return Array.from(grouped.entries());
-  }, [filteredProducts, selectedCategory]);
-
   const featuredProducts = useMemo(() => filteredProducts.filter((p) => p.featured), [filteredProducts]);
-  const groupedProductsAvailable = selectedCategory === "All" && productsByCategory.length > 0;
 
   const cartSubtotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
   const parsedTip = Number(checkout.tipAmount || 0);
@@ -432,22 +422,30 @@ export default function App() {
   useEffect(() => {
     if (!user) return undefined;
     const IDLE_MS = 30 * 60 * 1000;
-    let timer = null;
+    let loggedOut = false;
 
-    const resetIdleTimer = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
+    const markActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    const checkIdle = () => {
+      if (loggedOut) return;
+      if (Date.now() - lastActivityRef.current >= IDLE_MS) {
+        loggedOut = true;
         logoutUser("Logged out due to 30 minutes of inactivity");
-      }, IDLE_MS);
+      }
     };
 
     const activityEvents = ["mousemove", "keydown", "click", "scroll", "touchstart"];
-    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetIdleTimer, { passive: true }));
-    resetIdleTimer();
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, markActivity, { passive: true }));
+    document.addEventListener("visibilitychange", checkIdle);
+    const interval = setInterval(checkIdle, 60 * 1000);
+    markActivity();
 
     return () => {
-      if (timer) clearTimeout(timer);
-      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetIdleTimer));
+      clearInterval(interval);
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, markActivity));
+      document.removeEventListener("visibilitychange", checkIdle);
     };
   }, [user]);
 
@@ -645,17 +643,13 @@ export default function App() {
               </section>
             ) : null}
 
-            {!isInitialLoading && groupedProductsAvailable ? (
-              productsByCategory.map(([categoryName, items]) => (
-                <section className="category-section" key={categoryName}>
-                  <h3>{categoryName}</h3>
-                  <div className="products-grid">{items.map((p) => renderProductCard(p))}</div>
-                </section>
-              ))
-            ) : !isInitialLoading ? (
-              <div className="products-grid" id="productsGrid">
-                {filteredProducts.map((p) => renderProductCard(p))}
-              </div>
+            {!isInitialLoading ? (
+              <>
+                {selectedCategory === "All" ? <h3>All Products</h3> : null}
+                <div className="products-grid" id="productsGrid">
+                  {filteredProducts.map((p) => renderProductCard(p))}
+                </div>
+              </>
             ) : null}
             {!isInitialLoading && !filteredProducts.length ? (
               <div className="empty-card">
