@@ -98,6 +98,8 @@ function statusLabel(status) {
 }
 
 const TAX_RATE = 0.05;
+const CUSTOMER_IDLE_MS = 30 * 60 * 1000;
+const LAST_ACTIVITY_KEY = "myfarms_last_activity_at";
 
 export default function App() {
   const [products, setProducts] = useState([]);
@@ -191,6 +193,7 @@ export default function App() {
     } catch {
       // Ignore logout API failures; client state should still clear.
     }
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
     setUser(null);
     setOrders([]);
     setComplaints([]);
@@ -365,24 +368,29 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [productsRes, meRes, imagesRes] = await Promise.all([
+        const [productsRes, meRes, imagesRes] = await Promise.allSettled([
           api("/api/products"),
           api("/api/auth/me"),
           api("/api/resources/images")
         ]);
-        setProducts(productsRes.products || []);
-        setUser(meRes.user || null);
-        setImageFiles(imagesRes.files || []);
-        if (meRes.user?.name) {
+
+        const productsData = productsRes.status === "fulfilled" ? productsRes.value : { products: [] };
+        const meData = meRes.status === "fulfilled" ? meRes.value : { user: null };
+        const imagesData = imagesRes.status === "fulfilled" ? imagesRes.value : { files: [] };
+
+        setProducts(productsData.products || []);
+        setUser(meData.user || null);
+        setImageFiles(imagesData.files || []);
+        if (meData.user?.name) {
           setCheckout((prev) => ({
             ...prev,
-            fullName: meRes.user.name,
-            contactNumber: meRes.user.mobileNumber || prev.contactNumber
+            fullName: meData.user.name,
+            contactNumber: meData.user.mobileNumber || prev.contactNumber
           }));
           setProfileForm({
-            name: meRes.user.name || "",
-            email: meRes.user.email || "",
-            mobileNumber: meRes.user.mobileNumber || ""
+            name: meData.user.name || "",
+            email: meData.user.email || "",
+            mobileNumber: meData.user.mobileNumber || ""
           });
         }
       } finally {
@@ -421,17 +429,22 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return undefined;
-    const IDLE_MS = 30 * 60 * 1000;
     let loggedOut = false;
 
     const markActivity = () => {
-      lastActivityRef.current = Date.now();
+      const now = Date.now();
+      lastActivityRef.current = now;
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
     };
 
     const checkIdle = () => {
       if (loggedOut) return;
-      if (Date.now() - lastActivityRef.current >= IDLE_MS) {
+      const storedActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || lastActivityRef.current || Date.now());
+      const lastActivity = Number.isFinite(storedActivity) ? storedActivity : Date.now();
+      lastActivityRef.current = lastActivity;
+      if (Date.now() - lastActivity >= CUSTOMER_IDLE_MS) {
         loggedOut = true;
+        localStorage.removeItem(LAST_ACTIVITY_KEY);
         logoutUser("Logged out due to 30 minutes of inactivity");
       }
     };
@@ -440,7 +453,12 @@ export default function App() {
     activityEvents.forEach((eventName) => window.addEventListener(eventName, markActivity, { passive: true }));
     document.addEventListener("visibilitychange", checkIdle);
     const interval = setInterval(checkIdle, 60 * 1000);
-    markActivity();
+    const existingActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || Date.now());
+    lastActivityRef.current = Number.isFinite(existingActivity) ? existingActivity : Date.now();
+    if (!localStorage.getItem(LAST_ACTIVITY_KEY)) {
+      markActivity();
+    }
+    checkIdle();
 
     return () => {
       clearInterval(interval);

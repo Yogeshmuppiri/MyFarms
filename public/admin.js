@@ -117,6 +117,9 @@ function toast(msg, options = {}) {
   const persistent = Boolean(options.persistent);
   const type = options.type || "info";
   if (toastTimer) clearTimeout(toastTimer);
+  if (els.toast && els.toast.parentElement !== document.body) {
+    document.body.appendChild(els.toast);
+  }
 
   els.toast.classList.remove("hidden", "toast-error", "toast-success");
   if (type === "error") els.toast.classList.add("toast-error");
