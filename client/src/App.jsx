@@ -126,6 +126,8 @@ export default function App() {
   const [showOrderHistory, setShowOrderHistory] = useState(false);
   const [showMyComplaints, setShowMyComplaints] = useState(false);
   const [showComplaint, setShowComplaint] = useState(false);
+  const [showOrderCelebration, setShowOrderCelebration] = useState(false);
+  const [celebrationOrderCode, setCelebrationOrderCode] = useState("");
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isForgotSubmitting, setIsForgotSubmitting] = useState(false);
@@ -176,6 +178,7 @@ export default function App() {
   const featuredProducts = useMemo(() => filteredProducts.filter((p) => p.featured), [filteredProducts]);
 
   const cartSubtotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
+  const cartItemCount = useMemo(() => cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [cart]);
   const parsedTip = Number(checkout.tipAmount || 0);
   const discountAmount = Number(promoPreview.discountAmount || 0);
   const taxableAmount = cartSubtotal - discountAmount;
@@ -305,34 +308,45 @@ export default function App() {
 
     return (
       <article className="product-card" key={p.id}>
-        {imagePath ? (
-          <img
-            className="product-image"
-            src={imagePath}
-            alt={p.name}
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
+        <span className="product-card-glow" aria-hidden="true" />
+        <span className="product-card-sheen" aria-hidden="true" />
+        <div className="product-media">
+          <span className="product-orbit product-orbit-a" aria-hidden="true" />
+          <span className="product-orbit product-orbit-b" aria-hidden="true" />
+          <span className="product-stage" aria-hidden="true" />
+          {imagePath ? (
+            <img
+              className="product-image"
+              src={imagePath}
+              alt={p.name}
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          ) : null}
+        </div>
+        <div className="product-card-body">
+          <div className="product-meta-row">
+            <span className="badge">{p.category}</span>
+            {p.outOfStock ? <span className="stock-badge">Out of Stock</span> : null}
+          </div>
+          <h4>{p.name}</h4>
+          <p className="price">Rs.{p.price}/{p.unit}</p>
+          <button
+            className="btn-primary"
+            disabled={p.outOfStock}
+            onClick={() => {
+              if (p.variants.length) {
+                setVariantProduct(p);
+                setShowVariant(true);
+              } else {
+                addToCart(p);
+              }
             }}
-          />
-        ) : null}
-        <span className="badge">{p.category}</span>
-        {p.outOfStock ? <span className="stock-badge">Out of Stock</span> : null}
-        <h4>{p.name}</h4>
-        <p className="price">Rs.{p.price}/{p.unit}</p>
-        <button
-          className="btn-primary"
-          disabled={p.outOfStock}
-          onClick={() => {
-            if (p.variants.length) {
-              setVariantProduct(p);
-              setShowVariant(true);
-            } else {
-              addToCart(p);
-            }
-          }}
-        >
-          {p.outOfStock ? "Unavailable" : p.variants.length ? "Choose Variant" : "Add to Cart"}
-        </button>
+          >
+            {p.outOfStock ? "Unavailable" : p.variants.length ? "Choose Variant" : "Add to Cart"}
+          </button>
+        </div>
       </article>
     );
   }
@@ -678,7 +692,10 @@ export default function App() {
           </div>
 
           <aside className="cart-panel">
-            <h3>Cart</h3>
+            <h3 className="cart-title">
+              <span>Cart</span>
+              {cartItemCount ? <span className="cart-count-badge">{cartItemCount}</span> : null}
+            </h3>
             <div id="cartItems">
               {!cart.length ? (
                 <p className="muted small">Your cart is empty.</p>
@@ -824,6 +841,10 @@ export default function App() {
           ) : null}
         </section>
       </main>
+
+      <div className="floating-mascot" aria-hidden="true">
+        <img className="farmer-mascot-image" src="/resources/farmer-mascot-modified.png" alt="" />
+      </div>
 
       {showAuth ? (
         <div className="modal">
@@ -1022,6 +1043,9 @@ export default function App() {
                   setCheckout((prev) => ({ ...prev, tipAmount: "", promoCode: "" }));
                   setPromoPreview({ valid: false, code: "", discountAmount: 0, message: "No promo applied" });
                   setShowCheckout(false);
+                  setCelebrationOrderCode(data.orderId.slice(-6).toUpperCase());
+                  setShowOrderCelebration(true);
+                  setTimeout(() => setShowOrderCelebration(false), 2600);
                   showToast(`Order placed successfully (#${data.orderId.slice(-6).toUpperCase()})`);
                   loadOrders();
                 } catch (err) {
@@ -1135,6 +1159,27 @@ export default function App() {
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showOrderCelebration ? (
+        <div className="celebration-overlay" aria-live="polite">
+          <div className="celebration-card">
+            <div className="celebration-burst" aria-hidden="true">
+              <span className="celebration-piece c1" />
+              <span className="celebration-piece c2" />
+              <span className="celebration-piece c3" />
+              <span className="celebration-piece c4" />
+              <span className="celebration-piece c5" />
+              <span className="celebration-piece c6" />
+              <span className="celebration-piece c7" />
+              <span className="celebration-piece c8" />
+            </div>
+            <div className="celebration-icon">Tada!</div>
+            <h3>Order Placed Successfully</h3>
+            <p>Your fresh products are confirmed and being prepared.</p>
+            <strong>Order #{celebrationOrderCode}</strong>
           </div>
         </div>
       ) : null}
