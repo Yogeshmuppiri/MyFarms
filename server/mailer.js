@@ -679,6 +679,54 @@ async function sendWelcomeEmail({ toEmail, customerName }) {
   });
 }
 
+async function sendEmailVerificationEmail({ toEmail, customerName, verificationCode }) {
+  if (!toEmail || !verificationCode) return;
+
+  const subject = "Verify your My Farms account";
+  const text = [
+    `Hi ${customerName || "Customer"},`,
+    "",
+    "Welcome to My Farms.",
+    `Your verification code is: ${verificationCode}`,
+    "Enter this code in the app to activate your account.",
+    "",
+    "This code expires in 15 minutes.",
+    "",
+    "My Farms Team"
+  ].join("\n");
+  const html = makeEmailLayout({
+    heading: "Verify Your Email",
+    introHtml: `Hi <strong>${escapeHtml(customerName || "Customer")}</strong>, please confirm this email before we send account and order updates here.`,
+    bodyHtml: `
+      <div style="border:1px solid #e4e8d8;border-radius:14px;padding:18px;background:#fffdf4;text-align:center;">
+        <p style="margin:0 0 8px;color:#33412f;font-size:14px;">Use this 6-digit verification code</p>
+        <div style="display:inline-block;padding:12px 18px;border-radius:12px;background:#f4edd0;border:1px solid #e7d7a0;color:#111111;font-size:28px;font-weight:800;letter-spacing:6px;">
+          ${escapeHtml(verificationCode)}
+        </div>
+        <p style="margin:10px 0 0;color:#2f3a29;font-size:13px;">This code will expire in 15 minutes.</p>
+      </div>
+      <div style="margin-top:14px;border:1px solid #ece7d7;border-radius:12px;padding:14px;background:#fffef8;">
+        <p style="margin:0;color:#111111;">If you did not create this account, you can safely ignore this email.</p>
+      </div>
+    `,
+    closing: "Verification helps us send order updates to the right customer."
+  });
+
+  if (!hasEmailConfig()) {
+    console.log(`Email provider config missing. Verification email not sent to ${toEmail}. Code: ${verificationCode}`);
+    return;
+  }
+
+  await sendMailWithProvider({
+    from: getFromAddress(),
+    to: toEmail,
+    subject,
+    text,
+    html,
+    attachments: getLogoAttachment()
+  });
+}
+
 module.exports = {
   sendOrderEmail,
   sendCustomerOrderEmail,
@@ -686,6 +734,7 @@ module.exports = {
   sendOrderStatusEmail,
   sendComplaintCreatedEmails,
   sendComplaintClosedEmail,
+  sendEmailVerificationEmail,
   sendWelcomeEmail,
   hasSmtpConfig
 };

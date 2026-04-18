@@ -12,7 +12,10 @@ async function api(path, options = {}) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || "Request failed");
+    const error = new Error(data.error || "Request failed");
+    error.status = res.status;
+    error.data = data;
+    throw error;
   }
   return data;
 }
@@ -100,10 +103,27 @@ function statusLabel(status) {
 const TAX_RATE = 0.05;
 const CUSTOMER_IDLE_MS = 30 * 60 * 1000;
 const LAST_ACTIVITY_KEY = "myfarms_last_activity_at";
+const DEFAULT_SEARCH_HINTS = [
+  "Search for milk",
+  "Search for eggs",
+  "Search for chicken"
+];
+
+function getShowcaseAccent(category) {
+  const key = String(category || "").trim().toLowerCase();
+  if (key.includes("dairy")) return "#d9efe8";
+  if (key.includes("oil")) return "#f0d1a0";
+  if (key.includes("honey")) return "#f3d08d";
+  if (key.includes("egg")) return "#f6e3b7";
+  if (key.includes("fruit")) return "#f7d6b6";
+  if (key.includes("vegetable")) return "#d7edc5";
+  return "#f5e6b7";
+}
 
 export default function App() {
   const [products, setProducts] = useState([]);
   const [imageFiles, setImageFiles] = useState([]);
+  const [livePromos, setLivePromos] = useState([]);
   const [cart, setCart] = useState([]);
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState("login");
@@ -111,34 +131,41 @@ export default function App() {
   const [sortBy, setSortBy] = useState("none");
   const [featuredOnly, setFeaturedOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [animatedSearchHint, setAnimatedSearchHint] = useState(DEFAULT_SEARCH_HINTS[0]);
   const [orders, setOrders] = useState([]);
   const [complaints, setComplaints] = useState([]);
   const [toast, setToast] = useState("");
   const [promoPreview, setPromoPreview] = useState({ valid: false, code: "", discountAmount: 0, message: "" });
   const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [isNavCompact, setIsNavCompact] = useState(false);
+  const [isFilterCompact, setIsFilterCompact] = useState(false);
 
   const [showAuth, setShowAuth] = useState(false);
-  const [showVariant, setShowVariant] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showOrderHistory, setShowOrderHistory] = useState(false);
   const [showMyComplaints, setShowMyComplaints] = useState(false);
   const [showComplaint, setShowComplaint] = useState(false);
+  const [expandedOrders, setExpandedOrders] = useState({});
+  const [heroCarouselIndex, setHeroCarouselIndex] = useState(0);
+  const [promoCarouselIndex, setPromoCarouselIndex] = useState(0);
   const [showOrderCelebration, setShowOrderCelebration] = useState(false);
   const [celebrationOrderCode, setCelebrationOrderCode] = useState("");
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isForgotSubmitting, setIsForgotSubmitting] = useState(false);
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [isProfileSubmitting, setIsProfileSubmitting] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isComplaintSubmitting, setIsComplaintSubmitting] = useState(false);
   const lastActivityRef = useRef(Date.now());
+  const productsSectionRef = useRef(null);
 
-  const [variantProduct, setVariantProduct] = useState(null);
+  const [previewProduct, setPreviewProduct] = useState(null);
+  const [previewVariantName, setPreviewVariantName] = useState("");
 
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [verificationForm, setVerificationForm] = useState({ email: "", code: "", devCode: "" });
   const [forgotEmail, setForgotEmail] = useState("");
   const [profileForm, setProfileForm] = useState({ name: "", email: "", mobileNumber: "" });
   const [complaintForm, setComplaintForm] = useState({ orderNumber: "", issue: "", proofImage: null });
@@ -176,6 +203,49 @@ export default function App() {
   }, [products, selectedCategory, featuredOnly, searchQuery, sortBy]);
 
   const featuredProducts = useMemo(() => filteredProducts.filter((p) => p.featured), [filteredProducts]);
+  const searchHints = useMemo(() => {
+    const seenNames = new Set();
+    const dynamicHints = products
+      .map((product) => String(product.name || "").trim())
+      .filter((name) => {
+        if (!name) return false;
+        const key = name.toLowerCase();
+        if (seenNames.has(key)) return false;
+        seenNames.add(key);
+        return true;
+      })
+      .slice(0, 12)
+      .map((name) => `Search for ${name}`);
+
+    return dynamicHints.length ? dynamicHints : DEFAULT_SEARCH_HINTS;
+  }, [products]);
+
+  const heroShowcaseSource = useMemo(() => {
+    const adminSelected = products
+      .filter((p) => p.signatureShowcase && !p.outOfStock)
+      .slice(0, 5)
+      .map((p) => ({
+        name: p.name,
+        tag: p.featured ? "Customer favorite" : (p.category || "Farm fresh"),
+        image: p.imagePath ? resolveAssetUrl(p.imagePath) : getProductImagePath(p.name, imageFiles),
+        accent: getShowcaseAccent(p.category)
+      }))
+      .filter((item) => item.image);
+
+    return adminSelected;
+  }, [products, imageFiles]);
+
+  const heroCarouselItems = useMemo(() => {
+    const total = heroShowcaseSource.length;
+    return heroShowcaseSource.map((item, index) => {
+      let offset = index - heroCarouselIndex;
+      if (offset > total / 2) offset -= total;
+      if (offset < -total / 2) offset += total;
+      return { ...item, offset };
+    }).sort((a, b) => Math.abs(b.offset) - Math.abs(a.offset));
+  }, [heroCarouselIndex, heroShowcaseSource]);
+
+  const activePromo = livePromos.length ? livePromos[promoCarouselIndex % livePromos.length] : null;
 
   const cartSubtotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
   const cartItemCount = useMemo(() => cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [cart]);
@@ -188,6 +258,38 @@ export default function App() {
   function showToast(message) {
     setToast(message);
     setTimeout(() => setToast(""), 2600);
+  }
+
+  function openCheckoutFlow() {
+    if (!cart.length) {
+      showToast("Cart is empty");
+      return;
+    }
+    if (!user) {
+      setShowAuth(true);
+      showToast("Please login or signup first");
+      return;
+    }
+    setCheckout((prev) => ({ ...prev, fullName: prev.fullName || user.name || "" }));
+    setShowCheckout(true);
+  }
+
+  function openProductPreview(product) {
+    if (!product) return;
+    setPreviewProduct(product);
+    const firstAvailableVariant = (product.variants || []).find((v) => Number(v.stock || 0) > 0);
+    setPreviewVariantName(firstAvailableVariant?.name || product.variants?.[0]?.name || "");
+  }
+
+  function closeProductPreview() {
+    setPreviewProduct(null);
+    setPreviewVariantName("");
+  }
+
+  function openVerificationStep(email, devCode = "") {
+    setVerificationForm({ email: String(email || "").trim(), code: "", devCode: devCode || "" });
+    setAuthMode("verify");
+    setShowAuth(true);
   }
 
   async function logoutUser(message = "Logged out") {
@@ -307,7 +409,19 @@ export default function App() {
     const imagePath = p.imagePath ? resolveAssetUrl(p.imagePath) : getProductImagePath(p.name, imageFiles);
 
     return (
-      <article className="product-card" key={p.id}>
+      <article
+        className="product-card"
+        key={p.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => openProductPreview(p)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openProductPreview(p);
+          }
+        }}
+      >
         <span className="product-card-glow" aria-hidden="true" />
         <span className="product-card-sheen" aria-hidden="true" />
         <div className="product-media">
@@ -335,16 +449,12 @@ export default function App() {
           <button
             className="btn-primary"
             disabled={p.outOfStock}
-            onClick={() => {
-              if (p.variants.length) {
-                setVariantProduct(p);
-                setShowVariant(true);
-              } else {
-                addToCart(p);
-              }
+            onClick={(e) => {
+              e.stopPropagation();
+              openProductPreview(p);
             }}
           >
-            {p.outOfStock ? "Unavailable" : p.variants.length ? "Choose Variant" : "Add to Cart"}
+            {p.outOfStock ? "Unavailable" : "Add to Cart"}
           </button>
         </div>
       </article>
@@ -382,19 +492,22 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [productsRes, meRes, imagesRes] = await Promise.allSettled([
+        const [productsRes, meRes, imagesRes, promosRes] = await Promise.allSettled([
           api("/api/products"),
           api("/api/auth/me"),
-          api("/api/resources/images")
+          api("/api/resources/images"),
+          api("/api/promos/live")
         ]);
 
         const productsData = productsRes.status === "fulfilled" ? productsRes.value : { products: [] };
         const meData = meRes.status === "fulfilled" ? meRes.value : { user: null };
         const imagesData = imagesRes.status === "fulfilled" ? imagesRes.value : { files: [] };
+        const promosData = promosRes.status === "fulfilled" ? promosRes.value : { promos: [] };
 
         setProducts(productsData.products || []);
         setUser(meData.user || null);
         setImageFiles(imagesData.files || []);
+        setLivePromos(promosData.promos || []);
         if (meData.user?.name) {
           setCheckout((prev) => ({
             ...prev,
@@ -414,10 +527,101 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onScroll = () => setIsNavCompact(window.scrollY > 28);
+    const onScroll = () => {
+      const productsTop = productsSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
+      setIsFilterCompact(productsTop <= 150);
+    };
+
+    onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
   }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (mediaQuery.matches) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      setHeroCarouselIndex((current) => (current + 1) % Math.max(heroShowcaseSource.length, 1));
+    }, 2600);
+
+    return () => window.clearInterval(intervalId);
+  }, [heroShowcaseSource.length]);
+
+  useEffect(() => {
+    if (livePromos.length <= 1) return undefined;
+    const intervalId = window.setInterval(() => {
+      setPromoCarouselIndex((current) => (current + 1) % livePromos.length);
+    }, 3800);
+    return () => window.clearInterval(intervalId);
+  }, [livePromos.length]);
+
+  useEffect(() => {
+    if (promoCarouselIndex >= livePromos.length) {
+      setPromoCarouselIndex(0);
+    }
+  }, [promoCarouselIndex, livePromos.length]);
+
+  useEffect(() => {
+    if (heroCarouselIndex >= heroShowcaseSource.length) {
+      setHeroCarouselIndex(0);
+    }
+  }, [heroCarouselIndex, heroShowcaseSource.length]);
+
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      setAnimatedSearchHint("");
+      return undefined;
+    }
+
+    let isCancelled = false;
+    let hintIndex = 0;
+    let charIndex = 0;
+    let isDeleting = false;
+    let timeoutId;
+
+    const tick = () => {
+      if (isCancelled) return;
+
+      const phrase = searchHints[hintIndex] || DEFAULT_SEARCH_HINTS[0];
+
+      if (!isDeleting) {
+        charIndex += 1;
+        setAnimatedSearchHint(phrase.slice(0, charIndex));
+
+        if (charIndex >= phrase.length) {
+          isDeleting = true;
+          timeoutId = window.setTimeout(tick, 900);
+        } else {
+          timeoutId = window.setTimeout(tick, 68);
+        }
+        return;
+      }
+
+      charIndex -= 1;
+      setAnimatedSearchHint(phrase.slice(0, Math.max(charIndex, 0)));
+
+      if (charIndex <= 0) {
+        isDeleting = false;
+        hintIndex = (hintIndex + 1) % searchHints.length;
+        timeoutId = window.setTimeout(tick, 180);
+      } else {
+        timeoutId = window.setTimeout(tick, 32);
+      }
+    };
+
+    setAnimatedSearchHint("");
+    timeoutId = window.setTimeout(tick, 220);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [searchQuery, searchHints]);
 
   useEffect(() => {
     loadOrders();
@@ -428,6 +632,7 @@ export default function App() {
     if (!user) {
       setShowOrderHistory(false);
       setShowMyComplaints(false);
+      setExpandedOrders({});
     }
   }, [user]);
 
@@ -565,7 +770,7 @@ export default function App() {
             </g>
           </svg>
         </div>
-        <nav className={`topnav ${isNavCompact ? "compact" : ""}`}>
+        <nav className="topnav">
           <div className="brand">
             <img src="/myfarmslogo.png" alt="My Farms logo" className="brand-logo" />
           </div>
@@ -624,7 +829,80 @@ export default function App() {
       </header>
 
       <main>
-        <section className="controls reveal-on-scroll" id="shopSection">
+        <section className="showcase-section reveal-on-scroll" aria-label="Featured farm produce carousel">
+          <div className="showcase-copy">
+            <p className="kicker">Signature Produce</p>
+            <h3>Handpicked quality, presented with care</h3>
+            <p>
+              Where honest soil, patient hands, and everyday nourishment come together.
+            </p>
+          </div>
+          {heroCarouselItems.length ? (
+            <div className="hero-showcase">
+              <div className="hero-showcase-orbit hero-showcase-orbit-a" />
+              <div className="hero-showcase-orbit hero-showcase-orbit-b" />
+              <div className="hero-showcase-floor" />
+              <div className="hero-showcase-badge">Signature produce</div>
+              <div className="hero-carousel">
+                {heroCarouselItems.map((item) => (
+                  <article
+                    key={item.name}
+                    className={`hero-produce-card hero-produce-card-${item.offset}`}
+                    style={{ "--hero-accent": item.accent }}
+                  >
+                    <div className="hero-produce-glow" />
+                    <img src={item.image} alt={item.name} className="hero-produce-image" />
+                    <div className="hero-produce-meta">
+                      <strong>{item.name}</strong>
+                      <span>{item.tag}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="showcase-empty">
+              <strong>No signature products selected yet</strong>
+              <p>Admins can mark products as Signature Product in the admin portal to feature them here.</p>
+            </div>
+          )}
+        </section>
+
+        {activePromo ? (
+          <section className="promo-showcase" aria-label="Live promotion">
+            <div className="promo-orb promo-orb-a" aria-hidden="true" />
+            <div className="promo-orb promo-orb-b" aria-hidden="true" />
+            <div className="promo-showcase-copy" key={`copy-${activePromo.id}`}>
+              <p className="kicker">Live Farm Offer</p>
+              <h3>
+                Get {activePromo.discountPercent}% off on your orders above ₹{Number(activePromo.minOrderValue || 0).toLocaleString("en-IN")}
+              </h3>
+              <p>
+                Use code <strong>{activePromo.code}</strong> at checkout and enjoy fresh essentials with extra savings.
+              </p>
+            </div>
+            <div className="promo-code-card" key={activePromo.id}>
+              <span>Use Code</span>
+              <strong>{activePromo.code}</strong>
+              <small>Valid until {new Date(activePromo.expiresAt).toLocaleDateString()}</small>
+            </div>
+            {livePromos.length > 1 ? (
+              <div className="promo-dots" aria-label="Promotion slides">
+                {livePromos.map((promo, index) => (
+                  <button
+                    key={promo.id}
+                    type="button"
+                    className={index === promoCarouselIndex ? "active" : ""}
+                    aria-label={`Show promo ${promo.code}`}
+                    onClick={() => setPromoCarouselIndex(index)}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        <section className={`controls ${isFilterCompact ? "compact" : ""}`} id="shopSection">
           <h2>Shop Products</h2>
           <div className="controls-right">
             <input
@@ -632,7 +910,7 @@ export default function App() {
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search products (e.g. mango, milk, carrot)"
+              placeholder={animatedSearchHint}
             />
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
               <option value="none">Sort: None</option>
@@ -660,7 +938,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="content-grid reveal-on-scroll">
+        <section className="content-grid" ref={productsSectionRef}>
           <div>
             {isInitialLoading ? (
               <div className="products-grid skeleton-grid">
@@ -677,7 +955,6 @@ export default function App() {
 
             {!isInitialLoading ? (
               <>
-                {selectedCategory === "All" ? <h3>All Products</h3> : null}
                 <div className="products-grid" id="productsGrid">
                   {filteredProducts.map((p) => renderProductCard(p))}
                 </div>
@@ -744,25 +1021,25 @@ export default function App() {
             <button
               className="btn-primary"
               id="checkoutBtn"
-              onClick={() => {
-                if (!cart.length) {
-                  showToast("Cart is empty");
-                  return;
-                }
-                if (!user) {
-                  setShowAuth(true);
-                  showToast("Please login or signup first");
-                  return;
-                }
-                setCheckout((prev) => ({ ...prev, fullName: prev.fullName || user.name || "" }));
-                setShowCheckout(true);
-              }}
+              onClick={openCheckoutFlow}
             >
               Checkout
             </button>
             <p className="muted small">Checkout requires login/signup with email.</p>
           </aside>
         </section>
+
+        {cartItemCount ? (
+          <div className="mobile-cart-bar">
+            <div className="mobile-cart-summary">
+              <strong>{cartItemCount} item{cartItemCount > 1 ? "s" : ""}</strong>
+              <span>Rs.{cartSubtotal.toFixed(2)}</span>
+            </div>
+            <button className="btn-primary mobile-cart-btn" type="button" onClick={openCheckoutFlow}>
+              {user ? "Checkout" : "Login to Checkout"}
+            </button>
+          </div>
+        ) : null}
 
         <section className="orders-section reveal-on-scroll">
           <h3>My Orders</h3>
@@ -788,7 +1065,35 @@ export default function App() {
                     <div className="small">
                       <strong>Total: Rs.{Number(o.totalAmount).toFixed(2)}</strong>
                     </div>
-                    <button className="btn-ghost small" onClick={() => reorderOrder(o.id)}>Reorder</button>
+                    <div className="order-actions">
+                      <button
+                        className="btn-ghost small"
+                        onClick={() => setExpandedOrders((current) => ({ ...current, [o.id]: !current[o.id] }))}
+                      >
+                        {expandedOrders[o.id] ? "Hide Items" : "View Items"}
+                      </button>
+                      <button className="btn-ghost small" onClick={() => reorderOrder(o.id)}>Reorder</button>
+                    </div>
+                    {expandedOrders[o.id] ? (
+                      <div className="order-items-preview">
+                        <div className="small order-items-title">Items in this order</div>
+                        {(o.items || []).length ? (
+                          <div className="order-items-list">
+                            {(o.items || []).map((item, index) => (
+                              <div className="order-item-row" key={`${o.id}-${item.productId}-${item.variantName || "base"}-${index}`}>
+                                <div>
+                                  <strong>{item.productName}</strong>
+                                  {item.variantName ? <div className="small muted">{item.variantName}</div> : null}
+                                </div>
+                                <div className="small">Qty: {item.quantity}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="small muted">No item details available for this order.</div>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}
@@ -840,152 +1145,394 @@ export default function App() {
             </div>
           ) : null}
         </section>
+
       </main>
 
       <div className="floating-mascot" aria-hidden="true">
-        <img className="farmer-mascot-image" src="/resources/farmer-mascot-modified.png" alt="" />
+        <img className="farmer-mascot-image" src="/resources/farmer-mascot-main.png" alt="" />
       </div>
+
+      {showCheckout ? (
+        <>
+          <img
+            className="checkout-mascot-desktop"
+            src="/resources/farmer-mascot-main.png"
+            alt=""
+            aria-hidden="true"
+          />
+        </>
+      ) : null}
 
       {showAuth ? (
         <div className="modal">
           <div className="modal-card">
             <button className="close-btn" onClick={() => setShowAuth(false)}>x</button>
-            <h3>{authMode === "signup" ? "Create Account" : "Login"}</h3>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (isAuthSubmitting) return;
-                setIsAuthSubmitting(true);
-                try {
-                  const email = authForm.email.trim();
-                  if (!isValidEmail(email)) {
-                    showToast("Please enter a valid email address");
-                    return;
+            <h3>{authMode === "verify" ? "Verify Email" : authMode === "signup" ? "Create Account" : "Login"}</h3>
+            {authMode === "verify" ? (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (isAuthSubmitting) return;
+                  setIsAuthSubmitting(true);
+                  try {
+                    const code = verificationForm.code.trim();
+                    if (!verificationForm.email) {
+                      showToast("Please start signup again");
+                      return;
+                    }
+                    if (!/^\d{6}$/.test(code)) {
+                      showToast("Enter the 6-digit verification code");
+                      return;
+                    }
+
+                    const data = await api("/api/auth/verify-email", {
+                      method: "POST",
+                      body: JSON.stringify({ email: verificationForm.email, code })
+                    });
+
+                    setUser(data.user);
+                    setShowAuth(false);
+                    setVerificationForm({ email: "", code: "", devCode: "" });
+                    setAuthForm({ name: "", email: "", password: "" });
+                    setShowAuthPassword(false);
+                    setAuthMode("login");
+                    setProfileForm({
+                      name: data.user.name || "",
+                      email: data.user.email || "",
+                      mobileNumber: data.user.mobileNumber || ""
+                    });
+                    setCheckout((prev) => ({
+                      ...prev,
+                      fullName: data.user.name || "",
+                      contactNumber: data.user.mobileNumber || ""
+                    }));
+                    showToast(`Hi ${data.user.name}, your email is verified`);
+                  } catch (err) {
+                    showToast(err.message);
+                  } finally {
+                    setIsAuthSubmitting(false);
                   }
-
-                  const payload = { email, password: authForm.password };
-                  let endpoint = "/api/auth/login";
-                  if (authMode === "signup") {
-                    if (!isAllowedCustomerEmail(email)) {
-                      showToast("Use a Gmail or Yahoo email address");
-                      return;
-                    }
-                    const name = authForm.name.trim();
-                    if (!name) {
-                      showToast("Name is required for signup");
-                      return;
-                    }
-                    const availability = await api(`/api/auth/check-email?email=${encodeURIComponent(email)}`);
-                    if (!availability.available) {
-                      showToast("Email is already registered. Please login or use another email.");
-                      return;
-                    }
-                    payload.name = name;
-                    endpoint = "/api/auth/signup";
-                  }
-
-                  const data = await api(endpoint, {
-                    method: "POST",
-                    body: JSON.stringify(payload)
-                  });
-
-                  setUser(data.user);
-                  setShowAuth(false);
-                  setAuthForm({ name: "", email: "", password: "" });
-                  setAuthMode("login");
-                  setProfileForm({
-                    name: data.user.name || "",
-                    email: data.user.email || "",
-                    mobileNumber: data.user.mobileNumber || ""
-                  });
-                  setCheckout((prev) => ({
-                    ...prev,
-                    fullName: data.user.name || "",
-                    contactNumber: data.user.mobileNumber || ""
-                  }));
-                  showToast(`Hi ${data.user.name}, thanks for choosing My Farms`);
-                } catch (err) {
-                  showToast(err.message);
-                } finally {
-                  setIsAuthSubmitting(false);
-                }
-              }}
-            >
-              {authMode === "signup" ? (
-                <div className="field">
-                  <label>Name</label>
-                  <input value={authForm.name} onChange={(e) => setAuthForm((s) => ({ ...s, name: e.target.value }))} type="text" />
-                </div>
-              ) : null}
-              <div className="field">
-                <label>Email</label>
-                <input value={authForm.email} onChange={(e) => setAuthForm((s) => ({ ...s, email: e.target.value }))} type="email" required />
-              </div>
-              <div className="field">
-                <label>Password</label>
-                <input value={authForm.password} onChange={(e) => setAuthForm((s) => ({ ...s, password: e.target.value }))} type="password" required />
-              </div>
-              <button className="btn-primary" type="submit">
-                {isAuthSubmitting ? (
-                  <span className="btn-loading">
-                    <span className="spinner" />
-                    Please wait...
-                  </span>
-                ) : (
-                  authMode === "signup" ? "Signup" : "Login"
-                )}
-              </button>
-              <button
-                className="btn-ghost"
-                type="button"
-                disabled={isAuthSubmitting}
-                onClick={() => setAuthMode((m) => (m === "login" ? "signup" : "login"))}
-              >
-                {authMode === "signup" ? "Already have account" : "Create account"}
-              </button>
-              <button
-                className="btn-link"
-                type="button"
-                disabled={isAuthSubmitting}
-                onClick={() => {
-                  setShowAuth(false);
-                  setShowForgot(true);
                 }}
               >
-                Forgot password?
-              </button>
-            </form>
+                <p className="auth-note">
+                  We sent a 6-digit code to <strong>{verificationForm.email}</strong>. Your account will activate only after verification.
+                </p>
+                {verificationForm.devCode ? (
+                  <p className="auth-dev-note">Development code: <strong>{verificationForm.devCode}</strong></p>
+                ) : null}
+                <div className="field">
+                  <label>Verification Code</label>
+                  <input
+                    value={verificationForm.code}
+                    onChange={(e) => setVerificationForm((s) => ({ ...s, code: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="Enter 6-digit code"
+                    required
+                  />
+                </div>
+                <button className="btn-primary" type="submit" disabled={isAuthSubmitting}>
+                  {isAuthSubmitting ? (
+                    <span className="btn-loading">
+                      <span className="spinner" />
+                      Verifying...
+                    </span>
+                  ) : (
+                    "Verify Account"
+                  )}
+                </button>
+                <button
+                  className="btn-ghost"
+                  type="button"
+                  disabled={isAuthSubmitting}
+                  onClick={async () => {
+                    if (!verificationForm.email) {
+                      showToast("Please start signup again");
+                      return;
+                    }
+                    setIsAuthSubmitting(true);
+                    try {
+                      const data = await api("/api/auth/resend-verification", {
+                        method: "POST",
+                        body: JSON.stringify({ email: verificationForm.email })
+                      });
+                      setVerificationForm((s) => ({ ...s, devCode: data.devVerificationCode || s.devCode }));
+                      showToast(data.message || "Verification code resent");
+                    } catch (err) {
+                      showToast(err.message);
+                    } finally {
+                      setIsAuthSubmitting(false);
+                    }
+                  }}
+                >
+                  Resend Code
+                </button>
+                <button
+                  className="btn-link"
+                  type="button"
+                  disabled={isAuthSubmitting}
+                  onClick={() => {
+                    setVerificationForm({ email: "", code: "", devCode: "" });
+                    setAuthMode("signup");
+                  }}
+                >
+                  Back to signup
+                </button>
+              </form>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (isAuthSubmitting) return;
+                  setIsAuthSubmitting(true);
+                  try {
+                    const email = authForm.email.trim();
+                    if (!isValidEmail(email)) {
+                      showToast("Please enter a valid email address");
+                      return;
+                    }
+
+                    const payload = { email, password: authForm.password };
+                    let endpoint = "/api/auth/login";
+                    if (authMode === "signup") {
+                      if (!isAllowedCustomerEmail(email)) {
+                        showToast("Use a Gmail or Yahoo email address");
+                        return;
+                      }
+                      const name = authForm.name.trim();
+                      if (!name) {
+                        showToast("Name is required for signup");
+                        return;
+                      }
+                      const availability = await api(`/api/auth/check-email?email=${encodeURIComponent(email)}`);
+                      if (!availability.available) {
+                        if (availability.requiresEmailVerification) {
+                          openVerificationStep(email);
+                          showToast("This email is pending verification. Please enter the code sent to your inbox.");
+                          return;
+                        }
+                        showToast("Email is already registered. Please login or use another email.");
+                        return;
+                      }
+                      payload.name = name;
+                      endpoint = "/api/auth/signup";
+                    }
+
+                    const data = await api(endpoint, {
+                      method: "POST",
+                      body: JSON.stringify(payload)
+                    });
+
+                    if (data.requiresEmailVerification) {
+                      openVerificationStep(data.email || email, data.devVerificationCode || "");
+                      setAuthForm((s) => ({ ...s, password: "" }));
+                      showToast(data.message || "Please verify your email to activate your account");
+                      return;
+                    }
+
+                    setUser(data.user);
+                    setShowAuth(false);
+                    setAuthForm({ name: "", email: "", password: "" });
+                    setShowAuthPassword(false);
+                    setAuthMode("login");
+                    setProfileForm({
+                      name: data.user.name || "",
+                      email: data.user.email || "",
+                      mobileNumber: data.user.mobileNumber || ""
+                    });
+                    setCheckout((prev) => ({
+                      ...prev,
+                      fullName: data.user.name || "",
+                      contactNumber: data.user.mobileNumber || ""
+                    }));
+                    showToast(`Hi ${data.user.name}, thanks for choosing My Farms`);
+                  } catch (err) {
+                    if (err.data?.requiresEmailVerification && err.data?.email) {
+                      openVerificationStep(err.data.email);
+                    }
+                    showToast(err.message);
+                  } finally {
+                    setIsAuthSubmitting(false);
+                  }
+                }}
+              >
+                {authMode === "signup" ? (
+                  <div className="field">
+                    <label>Name</label>
+                    <input value={authForm.name} onChange={(e) => setAuthForm((s) => ({ ...s, name: e.target.value }))} type="text" />
+                  </div>
+                ) : null}
+                <div className="field">
+                  <label>Email</label>
+                  <input value={authForm.email} onChange={(e) => setAuthForm((s) => ({ ...s, email: e.target.value }))} type="email" required />
+                </div>
+                <div className="field">
+                  <label>Password</label>
+                  <input
+                    value={authForm.password}
+                    onChange={(e) => setAuthForm((s) => ({ ...s, password: e.target.value }))}
+                    type={showAuthPassword ? "text" : "password"}
+                    required
+                  />
+                  <label className="checkbox-inline">
+                    <input
+                      type="checkbox"
+                      checked={showAuthPassword}
+                      onChange={(e) => setShowAuthPassword(e.target.checked)}
+                    />
+                    <span>Show password</span>
+                  </label>
+                </div>
+                <button className="btn-primary" type="submit">
+                  {isAuthSubmitting ? (
+                    <span className="btn-loading">
+                      <span className="spinner" />
+                      Please wait...
+                    </span>
+                  ) : (
+                    authMode === "signup" ? "Signup" : "Login"
+                  )}
+                </button>
+                <button
+                  className="btn-ghost"
+                  type="button"
+                  disabled={isAuthSubmitting}
+                  onClick={() => {
+                    setVerificationForm({ email: "", code: "", devCode: "" });
+                    setAuthMode((m) => (m === "login" ? "signup" : "login"));
+                  }}
+                >
+                  {authMode === "signup" ? "Already have account" : "Create account"}
+                </button>
+                <button
+                  className="btn-link"
+                  type="button"
+                  disabled={isAuthSubmitting}
+                  onClick={() => {
+                    setShowAuth(false);
+                    setShowForgot(true);
+                  }}
+                >
+                  Forgot password?
+                </button>
+              </form>
+            )}
           </div>
         </div>
       ) : null}
 
-      {showVariant && variantProduct ? (
-        <div className="modal">
-          <div className="modal-card">
-            <button className="close-btn" onClick={() => setShowVariant(false)}>x</button>
-            <h3>Choose {variantProduct.name} Variant</h3>
-            <div>
-              {variantProduct.variants.map((v) => (
-                <div className="cart-item" key={v.name}>
-                  <div>
-                    <strong>{v.name}</strong>
-                    <div className="small muted">
-                      Rs.{v.price}/{variantProduct.unit}
-                      {Number(v.stock || 0) <= 0 ? " | Out of stock" : ""}
-                    </div>
-                  </div>
-                  <button
-                    className="btn-primary"
-                    disabled={Number(v.stock || 0) <= 0}
-                    onClick={() => {
-                      addToCart(variantProduct, v);
-                      setShowVariant(false);
+      {previewProduct ? (
+        <div
+          className="modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              closeProductPreview();
+            }
+          }}
+        >
+          <div className="preview-drawer" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={closeProductPreview}>x</button>
+            <div className="preview-drawer-media">
+              <span className="preview-drawer-glow" aria-hidden="true" />
+              {(() => {
+                const previewImage = previewProduct.imagePath
+                  ? resolveAssetUrl(previewProduct.imagePath)
+                  : getProductImagePath(previewProduct.name, imageFiles);
+                return previewImage ? (
+                  <img
+                    className="preview-drawer-image"
+                    src={previewImage}
+                    alt={previewProduct.name}
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
                     }}
-                  >
-                    {Number(v.stock || 0) <= 0 ? "Unavailable" : "Add"}
-                  </button>
+                  />
+                ) : null;
+              })()}
+            </div>
+            <div className="preview-drawer-body">
+              <div className="preview-heading-row">
+                <div>
+                  <span className="badge">{previewProduct.category}</span>
+                  <h3>{previewProduct.name}</h3>
                 </div>
-              ))}
+                {previewProduct.outOfStock ? <span className="stock-badge">Out of Stock</span> : null}
+              </div>
+              <p className="preview-price">
+                Rs.{previewProduct.price}/{previewProduct.unit}
+              </p>
+              <div className="preview-meta-grid">
+                <div className="preview-meta-card">
+                  <span>Availability</span>
+                  <strong>{previewProduct.outOfStock ? "Currently unavailable" : "Fresh and ready"}</strong>
+                </div>
+                <div className="preview-meta-card">
+                  <span>Status</span>
+                  <strong>
+                    {previewProduct.outOfStock ? "Out of stock" : "In stock"}
+                  </strong>
+                </div>
+              </div>
+
+              {previewProduct.description ? (
+                <p className="preview-copy">{previewProduct.description}</p>
+              ) : null}
+
+              {previewProduct.variants.length ? (
+                <div className="preview-variants">
+                  <p className="preview-section-label">Choose a variant</p>
+                  <div className="preview-variant-list">
+                    {previewProduct.variants.map((v) => {
+                      const unavailable = Number(v.stock || 0) <= 0;
+                      const isSelected = previewVariantName === v.name;
+                      return (
+                        <button
+                          key={v.name}
+                          type="button"
+                          className={`preview-variant-pill ${isSelected ? "active" : ""}`}
+                          disabled={unavailable}
+                          onClick={() => setPreviewVariantName(v.name)}
+                        >
+                          <strong>{v.name}</strong>
+                          <span>
+                            Rs.{v.price}/{previewProduct.unit}
+                            {unavailable ? " | Out of stock" : ""}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : !previewProduct.description ? (
+                <p className="preview-copy">
+                  A simple, farm-fresh staple selected to bring dependable quality to everyday kitchens.
+                </p>
+              ) : null}
+
+              <div className="preview-actions">
+                <button className="btn-ghost" type="button" onClick={closeProductPreview}>
+                  Continue Browsing
+                </button>
+                <button
+                  className="btn-primary"
+                  type="button"
+                  disabled={
+                    previewProduct.outOfStock ||
+                    (previewProduct.variants.length
+                      ? !previewProduct.variants.find((v) => v.name === previewVariantName && Number(v.stock || 0) > 0)
+                      : false)
+                  }
+                  onClick={() => {
+                    const selectedVariant = previewProduct.variants.length
+                      ? previewProduct.variants.find((v) => v.name === previewVariantName)
+                      : null;
+                    addToCart(previewProduct, selectedVariant || null);
+                    closeProductPreview();
+                  }}
+                >
+                  {previewProduct.outOfStock ? "Unavailable" : "Add to Cart"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1247,8 +1794,10 @@ export default function App() {
                   type="email"
                   value={profileForm.email}
                   onChange={(e) => setProfileForm((s) => ({ ...s, email: e.target.value }))}
+                  disabled
                   required
                 />
+                <p className="field-help">Email is locked to your verified account so order updates always reach the right inbox.</p>
               </div>
               <div className="field">
                 <label>Mobile Number</label>

@@ -16,6 +16,7 @@ const {
   sendOrderStatusEmail,
   sendComplaintCreatedEmails,
   sendComplaintClosedEmail,
+  sendEmailVerificationEmail,
   sendWelcomeEmail,
   hasSmtpConfig
 } = require("./mailer");
@@ -215,6 +216,37 @@ function isAllowedCustomerEmailDomain(email) {
   return domain === "gmail.com" || domain === "yahoo.com";
 }
 
+function createEmailVerificationCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+function hashVerificationCode(code) {
+  return crypto.createHash("sha256").update(String(code || "")).digest("hex");
+}
+
+function isUserEmailVerified(user) {
+  return user?.isEmailVerified !== false;
+}
+
+function getSessionUser(user) {
+  return {
+    id: String(user._id),
+    name: user.name,
+    email: user.email,
+    mobileNumber: user.mobileNumber || "",
+    isEmailVerified: isUserEmailVerified(user)
+  };
+}
+
+async function issueEmailVerificationForUser(user) {
+  const verificationCode = createEmailVerificationCode();
+  user.isEmailVerified = false;
+  user.emailVerificationCodeHash = hashVerificationCode(verificationCode);
+  user.emailVerificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await user.save();
+  return verificationCode;
+}
+
 function isValidContactNumber(contactNumber) {
   return /^\d{10}$/.test(String(contactNumber || "").trim());
 }
@@ -222,6 +254,10 @@ function isValidContactNumber(contactNumber) {
 function isValidMobileNumber(mobileNumber) {
   if (mobileNumber === null || mobileNumber === undefined || String(mobileNumber).trim() === "") return true;
   return /^\d{10}$/.test(String(mobileNumber).trim());
+}
+
+function normalizeProductDescription(value) {
+  return String(value || "").trim();
 }
 
 function parseDateInput(value, endOfDay = false) {
@@ -313,23 +349,156 @@ app.post("/api/auth/signup", async (req, res) => {
 
     const exists = await models.User.findOne({ email }).lean();
     if (exists) {
+      if (!isUserEmailVerified(exists)) {
+        return res.status(409).json({
+          error: "This email is pending verification. Please verify it to activate your account.",
+          requiresEmailVerification: true,
+          email
+        });
+      }
       return res.status(409).json({ error: "Email is already registered" });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await models.User.create({ name, email, passwordHash, mobileNumber: null });
+    const user = await models.User.create({
+      name,
+      email,
+      passwordHash,
+      mobileNumber: null,
+      isEmailVerified: false,
+      emailVerificationCodeHash: null,
+      emailVerificationExpiresAt: null
+    });
 
-    req.session.user = { id: String(user._id), name: user.name, email: user.email, mobileNumber: user.mobileNumber || "" };
+    const verificationCode = await issueEmailVerificationForUser(user);
 
     runInBackground(
-      () => withTimeout(sendWelcomeEmail({ toEmail: user.email, customerName: user.name }), 15000, "Welcome email"),
-      "Signup succeeded but welcome email failed"
+      () => withTimeout(
+        sendEmailVerificationEmail({
+          toEmail: user.email,
+          customerName: user.name,
+          verificationCode
+        }),
+        15000,
+        "Verification email"
+      ),
+      "Signup succeeded but verification email failed"
     );
 
-    res.status(201).json({ user: req.session.user });
+    const response = {
+      ok: true,
+      requiresEmailVerification: true,
+      email: user.email,
+      message: "We sent a 6-digit verification code to your email. Enter it to activate your account."
+    };
+    if (!hasSmtpConfig()) {
+      response.devVerificationCode = verificationCode;
+      response.message = "SMTP is not configured. Use the development verification code to activate the account.";
+    }
+
+    res.status(201).json(response);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Signup failed" });
+  }
+});
+
+app.post("/api/auth/verify-email", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const code = String(req.body.code || "").trim();
+
+    if (!email || !code) {
+      return res.status(400).json({ error: "Email and verification code are required" });
+    }
+
+    const user = await models.User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: "Account not found for this email" });
+    }
+
+    if (isUserEmailVerified(user)) {
+      req.session.user = getSessionUser(user);
+      return res.json({ user: req.session.user, alreadyVerified: true });
+    }
+
+    const expectedHash = String(user.emailVerificationCodeHash || "");
+    const isCodeValid = expectedHash && hashVerificationCode(code) === expectedHash;
+    const isCodeFresh = user.emailVerificationExpiresAt && user.emailVerificationExpiresAt > new Date();
+
+    if (!isCodeValid || !isCodeFresh) {
+      return res.status(400).json({ error: "Verification code is invalid or expired" });
+    }
+
+    user.isEmailVerified = true;
+    user.emailVerificationCodeHash = null;
+    user.emailVerificationExpiresAt = null;
+    await user.save();
+
+    req.session.user = getSessionUser(user);
+
+    runInBackground(
+      () => withTimeout(sendWelcomeEmail({ toEmail: user.email, customerName: user.name }), 15000, "Welcome email"),
+      "Email verification succeeded but welcome email failed"
+    );
+
+    return res.json({
+      ok: true,
+      user: req.session.user,
+      message: "Email verified successfully"
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Could not verify email" });
+  }
+});
+
+app.post("/api/auth/resend-verification", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    if (!isAllowedCustomerEmailDomain(email)) {
+      return res.status(400).json({ error: "Use a valid Gmail or Yahoo email address (example@gmail.com)" });
+    }
+
+    const user = await models.User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: "No account found with this email" });
+    }
+    if (isUserEmailVerified(user)) {
+      return res.status(400).json({ error: "This account is already verified" });
+    }
+
+    const verificationCode = await issueEmailVerificationForUser(user);
+
+    runInBackground(
+      () => withTimeout(
+        sendEmailVerificationEmail({
+          toEmail: user.email,
+          customerName: user.name,
+          verificationCode
+        }),
+        15000,
+        "Verification email"
+      ),
+      "Resend verification email failed"
+    );
+
+    const response = {
+      ok: true,
+      message: "A fresh verification code has been sent to your email."
+    };
+    if (!hasSmtpConfig()) {
+      response.devVerificationCode = verificationCode;
+      response.message = "SMTP is not configured. Use the development verification code to activate the account.";
+    }
+
+    return res.json(response);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Could not resend verification code" });
   }
 });
 
@@ -352,7 +521,15 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    req.session.user = { id: String(user._id), name: user.name, email: user.email, mobileNumber: user.mobileNumber || "" };
+    if (!isUserEmailVerified(user)) {
+      return res.status(403).json({
+        error: "Please verify your email before logging in. We can resend the code if needed.",
+        requiresEmailVerification: true,
+        email: user.email
+      });
+    }
+
+    req.session.user = getSessionUser(user);
     res.json({ user: req.session.user });
   } catch (err) {
     console.error(err);
@@ -463,8 +640,11 @@ app.get("/api/auth/check-email", async (req, res) => {
     return res.status(400).json({ error: "Use a valid Gmail or Yahoo email address (example@gmail.com)" });
   }
 
-  const exists = await models.User.exists({ email });
-  return res.json({ available: !exists });
+  const existingUser = await models.User.findOne({ email }).select("isEmailVerified").lean();
+  return res.json({
+    available: !existingUser,
+    requiresEmailVerification: existingUser ? !isUserEmailVerified(existingUser) : false
+  });
 });
 
 app.patch("/api/auth/profile", requireAuth, async (req, res) => {
@@ -484,14 +664,20 @@ app.patch("/api/auth/profile", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Please enter a valid 10-digit mobile number" });
     }
 
-    const existing = await models.User.findOne({ email, _id: { $ne: userId } }).lean();
-    if (existing) {
-      return res.status(409).json({ error: "Email is already in use by another account" });
+    const currentUser = await models.User.findById(userId).select("email").lean();
+    if (!currentUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (email !== currentUser.email) {
+      return res.status(400).json({
+        error: "Email address cannot be changed here yet. Please use your verified signup email for order updates."
+      });
     }
 
     const user = await models.User.findByIdAndUpdate(
       userId,
-      { $set: { name, email, mobileNumber: mobileNumber || null } },
+      { $set: { name, email: currentUser.email, mobileNumber: mobileNumber || null } },
       { new: true }
     ).lean();
 
@@ -499,12 +685,7 @@ app.patch("/api/auth/profile", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    req.session.user = {
-      id: String(user._id),
-      name: user.name,
-      email: user.email,
-      mobileNumber: user.mobileNumber || ""
-    };
+    req.session.user = getSessionUser(user);
 
     return res.json({ user: req.session.user });
   } catch (err) {
@@ -564,9 +745,11 @@ app.get("/api/admin/products", requireAdmin, async (_req, res) => {
       category: p.category,
       price: p.price,
       unit: p.unit,
+      description: p.description || "",
       imagePath: p.imagePath || null,
       stock: p.stock || 0,
       featured: Boolean(p.featured),
+      signatureShowcase: Boolean(p.signatureShowcase),
       forceOutOfStock: Boolean(p.forceOutOfStock),
       orderCount: p.orderCount || 0,
       outOfStock: isProductOutOfStock(p),
@@ -591,9 +774,11 @@ app.put("/api/admin/products/:id", requireAdmin, (req, res) => {
       const nextName = String(req.body.name ?? product.name).trim();
       const nextCategory = String(req.body.category ?? product.category).trim();
       const nextUnit = String(req.body.unit ?? product.unit).trim();
+      const nextDescription = normalizeProductDescription(req.body.description ?? product.description);
       const nextPrice = req.body.price === undefined ? product.price : Number(req.body.price);
       const nextStock = req.body.stock === undefined ? product.stock : Number(req.body.stock);
       const nextFeatured = String(req.body.featured ?? product.featured) === "true";
+      const nextSignatureShowcase = String(req.body.signatureShowcase ?? product.signatureShowcase) === "true";
       const nextForceOutOfStock =
         req.body.forceOutOfStock === undefined
           ? Boolean(product.forceOutOfStock)
@@ -605,13 +790,18 @@ app.put("/api/admin/products/:id", requireAdmin, (req, res) => {
       if (!Number.isInteger(nextStock) || nextStock < 0) {
         return res.status(400).json({ error: "Stock must be a non-negative integer" });
       }
+      if (nextDescription.length > 200) {
+        return res.status(400).json({ error: "Product description cannot exceed 200 characters" });
+      }
 
       product.name = nextName;
       product.category = nextCategory;
       product.unit = nextUnit;
+      product.description = nextDescription;
       product.price = nextPrice;
       product.stock = nextStock;
       product.featured = nextFeatured;
+      product.signatureShowcase = nextSignatureShowcase;
       product.forceOutOfStock = nextForceOutOfStock;
       if (req.file) {
         product.imagePath = await persistUpload(req.file, { folder: "myfarms/products", localPrefix: "product" });
@@ -768,7 +958,31 @@ app.get("/api/admin/promos", requireAdmin, async (_req, res) => {
       maxUses: p.maxUses,
       usedCount: p.usedCount,
       expiresAt: p.expiresAt,
-      active: p.active
+      active: p.active,
+      showOnHomepage: Boolean(p.showOnHomepage)
+    }))
+  });
+});
+
+app.get("/api/promos/live", async (_req, res) => {
+  const now = new Date();
+  const promos = await models.PromoCode.find({
+    active: true,
+    showOnHomepage: true,
+    expiresAt: { $gt: now },
+    $expr: { $lt: ["$usedCount", "$maxUses"] }
+  })
+    .sort({ discountPercent: -1, createdAt: -1 })
+    .limit(8)
+    .lean();
+
+  res.json({
+    promos: promos.map((p) => ({
+      id: String(p._id),
+      code: p.code,
+      discountPercent: p.discountPercent,
+      minOrderValue: p.minOrderValue,
+      expiresAt: p.expiresAt
     }))
   });
 });
@@ -779,6 +993,7 @@ app.post("/api/admin/promos", requireAdmin, async (req, res) => {
   const minOrderValue = Number(req.body.minOrderValue || 0);
   const maxUses = Number(req.body.maxUses || 100);
   const expiresAt = new Date(req.body.expiresAt);
+  const showOnHomepage = Boolean(req.body.showOnHomepage);
 
   if (!/^[A-Z0-9]{4,20}$/.test(code)) return res.status(400).json({ error: "Promo code must be 4-20 alphanumeric" });
   if (!Number.isFinite(discountPercent) || discountPercent < 1 || discountPercent > 90) {
@@ -789,7 +1004,7 @@ app.post("/api/admin/promos", requireAdmin, async (req, res) => {
   if (Number.isNaN(expiresAt.getTime())) return res.status(400).json({ error: "Invalid expiry date" });
 
   try {
-    await models.PromoCode.create({ code, discountPercent, minOrderValue, maxUses, expiresAt, active: true });
+    await models.PromoCode.create({ code, discountPercent, minOrderValue, maxUses, expiresAt, active: true, showOnHomepage });
     res.status(201).json({ ok: true });
   } catch (promoErr) {
     if (promoErr.code === 11000) return res.status(409).json({ error: "Promo code already exists" });
@@ -800,6 +1015,7 @@ app.post("/api/admin/promos", requireAdmin, async (req, res) => {
 app.patch("/api/admin/promos/:id", requireAdmin, async (req, res) => {
   const update = {};
   if (req.body.active !== undefined) update.active = Boolean(req.body.active);
+  if (req.body.showOnHomepage !== undefined) update.showOnHomepage = Boolean(req.body.showOnHomepage);
   if (req.body.expiresAt !== undefined) {
     const d = new Date(req.body.expiresAt);
     if (Number.isNaN(d.getTime())) return res.status(400).json({ error: "Invalid expiry date" });
@@ -920,12 +1136,14 @@ app.get("/api/products", async (_req, res) => {
     category: p.category,
     price: p.price,
     unit: p.unit,
+    description: p.description || "",
     imagePath: p.imagePath || null,
-      stock: p.stock || 0,
-      featured: Boolean(p.featured),
-      forceOutOfStock: Boolean(p.forceOutOfStock),
-      orderCount: p.orderCount || 0,
-      outOfStock: isProductOutOfStock(p),
+    stock: p.stock || 0,
+    featured: Boolean(p.featured),
+    signatureShowcase: Boolean(p.signatureShowcase),
+    forceOutOfStock: Boolean(p.forceOutOfStock),
+    orderCount: p.orderCount || 0,
+    outOfStock: isProductOutOfStock(p),
     isVariantParent: p.isVariantParent,
     createdAt: p.createdAt,
     variants: (p.variants || []).map((v) => ({
@@ -949,9 +1167,11 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
       const name = String(req.body.name || "").trim();
       const category = String(req.body.category || "").trim();
       const unit = String(req.body.unit || "").trim() || "kg";
+      const description = normalizeProductDescription(req.body.description);
       const price = Number(req.body.price);
       const stock = Number(req.body.stock ?? 0);
       const featured = String(req.body.featured || "false") === "true";
+      const signatureShowcase = String(req.body.signatureShowcase || "false") === "true";
       const forceOutOfStock = String(req.body.forceOutOfStock || "false") === "true";
       const rawVariants = String(req.body.variantsJson || "[]");
       let variantsPayload = [];
@@ -961,6 +1181,9 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
       }
       if (!Number.isInteger(stock) || stock < 0) {
         return res.status(400).json({ error: "Stock must be a non-negative integer" });
+      }
+      if (description.length > 200) {
+        return res.status(400).json({ error: "Product description cannot exceed 200 characters" });
       }
 
       try {
@@ -986,9 +1209,11 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
         name,
         category,
         unit,
+        description,
         price,
         stock,
         featured,
+        signatureShowcase,
         forceOutOfStock,
         imagePath,
         isVariantParent: variantsPayload.length > 0,
@@ -1001,6 +1226,7 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
           name: product.name,
           category: product.category,
           unit: product.unit,
+          description: product.description || "",
           price: product.price,
           imagePath: product.imagePath
         }

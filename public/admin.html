@@ -84,6 +84,10 @@
             <input id="promoMaxUses" type="number" min="1" value="100" required />
             <label>Expiry</label>
             <input id="promoExpiry" type="date" required />
+            <label class="checkbox-line">
+              <input id="promoLive" type="checkbox" />
+              <span>Make this available in live homepage offers</span>
+            </label>
             <button type="submit">Create Promo</button>
           </form>
           <div id="promoList" class="stack"></div>
@@ -100,10 +104,17 @@
             <input id="productPrice" type="number" min="1" step="0.01" required />
             <label>Unit</label>
             <input id="productUnit" type="text" value="kg" required />
+            <label>Description (Optional, max 200 characters)</label>
+            <textarea id="productDescription" rows="3" maxlength="200" placeholder="Short product story or quality note"></textarea>
             <label>Stock</label>
             <input id="productStock" type="number" min="0" step="1" value="100" required />
             <label>Featured</label>
             <select id="productFeatured">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+            <label>Signature Product</label>
+            <select id="productSignatureShowcase">
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
@@ -128,10 +139,17 @@
             <input id="managePrice" type="number" min="1" step="0.01" required />
             <label>Unit</label>
             <input id="manageUnit" type="text" required />
+            <label>Description (Optional, max 200 characters)</label>
+            <textarea id="manageDescription" rows="3" maxlength="200" placeholder="Short product story or quality note"></textarea>
             <label>Stock</label>
             <input id="manageStock" type="number" min="0" step="1" required />
             <label>Featured</label>
             <select id="manageFeatured">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+            <label>Signature Product</label>
+            <select id="manageSignatureShowcase">
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>

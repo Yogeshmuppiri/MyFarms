@@ -7,6 +7,9 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     mobileNumber: { type: String, default: null },
     passwordHash: { type: String, required: true },
+    isEmailVerified: { type: Boolean, default: true },
+    emailVerificationCodeHash: { type: String, default: null },
+    emailVerificationExpiresAt: { type: Date, default: null },
     resetTokenHash: { type: String, default: null },
     resetTokenExpiresAt: { type: Date, default: null }
   },
@@ -19,9 +22,11 @@ const productSchema = new mongoose.Schema(
     category: { type: String, required: true, trim: true },
     price: { type: Number, required: true },
     unit: { type: String, required: true },
+    description: { type: String, default: "", trim: true, maxlength: 200 },
     imagePath: { type: String, default: null },
     stock: { type: Number, default: 100, min: 0 },
     featured: { type: Boolean, default: false },
+    signatureShowcase: { type: Boolean, default: false },
     orderCount: { type: Number, default: 0 },
     forceOutOfStock: { type: Boolean, default: false },
     isVariantParent: { type: Boolean, default: false },
@@ -77,7 +82,8 @@ const promoCodeSchema = new mongoose.Schema(
     maxUses: { type: Number, default: 100, min: 1 },
     usedCount: { type: Number, default: 0, min: 0 },
     expiresAt: { type: Date, required: true },
-    active: { type: Boolean, default: true }
+    active: { type: Boolean, default: true },
+    showOnHomepage: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
@@ -131,8 +137,11 @@ async function initDb() {
   await seedProductsIfNeeded();
   await Product.updateMany({ stock: { $exists: false } }, { $set: { stock: 100 } });
   await Product.updateMany({ featured: { $exists: false } }, { $set: { featured: false } });
+  await Product.updateMany({ signatureShowcase: { $exists: false } }, { $set: { signatureShowcase: false } });
+  await Product.updateMany({ description: { $exists: false } }, { $set: { description: "" } });
   await Product.updateMany({ orderCount: { $exists: false } }, { $set: { orderCount: 0 } });
   await Product.updateMany({ forceOutOfStock: { $exists: false } }, { $set: { forceOutOfStock: false } });
+  await PromoCode.updateMany({ showOnHomepage: { $exists: false } }, { $set: { showOnHomepage: false } });
   await Product.updateMany(
     {},
     [

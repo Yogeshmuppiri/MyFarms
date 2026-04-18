@@ -108,6 +108,19 @@ form {
   max-width: 700px;
 }
 
+.checkbox-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #31513a;
+  font-weight: 700;
+}
+
+.checkbox-line input {
+  width: auto;
+  margin: 0;
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: 1fr 110px 110px auto;

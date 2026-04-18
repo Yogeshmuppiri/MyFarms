@@ -29,14 +29,17 @@ const els = {
   promoMinOrder: document.getElementById("promoMinOrder"),
   promoMaxUses: document.getElementById("promoMaxUses"),
   promoExpiry: document.getElementById("promoExpiry"),
+  promoLive: document.getElementById("promoLive"),
   promoList: document.getElementById("promoList"),
   productForm: document.getElementById("productForm"),
   productName: document.getElementById("productName"),
   productCategory: document.getElementById("productCategory"),
   productPrice: document.getElementById("productPrice"),
   productUnit: document.getElementById("productUnit"),
+  productDescription: document.getElementById("productDescription"),
   productStock: document.getElementById("productStock"),
   productFeatured: document.getElementById("productFeatured"),
+  productSignatureShowcase: document.getElementById("productSignatureShowcase"),
   productVariants: document.getElementById("productVariants"),
   productImage: document.getElementById("productImage"),
   manageProductSelect: document.getElementById("manageProductSelect"),
@@ -45,8 +48,10 @@ const els = {
   manageCategory: document.getElementById("manageCategory"),
   managePrice: document.getElementById("managePrice"),
   manageUnit: document.getElementById("manageUnit"),
+  manageDescription: document.getElementById("manageDescription"),
   manageStock: document.getElementById("manageStock"),
   manageFeatured: document.getElementById("manageFeatured"),
+  manageSignatureShowcase: document.getElementById("manageSignatureShowcase"),
   deleteProductBtn: document.getElementById("deleteProductBtn"),
   variantList: document.getElementById("variantList"),
   variantForm: document.getElementById("variantForm"),
@@ -609,11 +614,14 @@ async function renderPromos() {
           <strong>${p.code}</strong>
           <div class="meta">${p.discountPercent}% off | Min Rs.${p.minOrderValue} | Uses ${p.usedCount}/${p.maxUses} | Expires ${new Date(
             p.expiresAt
-          ).toLocaleDateString()}</div>
+          ).toLocaleDateString()} | ${p.showOnHomepage ? "Live on homepage" : "Hidden from homepage"}</div>
         </div>
         <div class="row">
           <button type="button" data-action="toggle-promo" data-id="${p.id}" data-active="${p.active}">
             ${p.active ? "Deactivate" : "Activate"}
+          </button>
+          <button type="button" data-action="toggle-promo-live" data-id="${p.id}" data-live="${p.showOnHomepage}">
+            ${p.showOnHomepage ? "Hide From Live" : "Show Live"}
           </button>
           <button type="button" data-action="delete-promo" data-id="${p.id}">Delete</button>
         </div>
@@ -629,6 +637,17 @@ async function renderPromos() {
         body: JSON.stringify({ active: btn.dataset.active !== "true" })
       });
       toast("Promo updated");
+      renderPromos();
+    };
+  });
+
+  els.promoList.querySelectorAll("button[data-action='toggle-promo-live']").forEach((btn) => {
+    btn.onclick = async () => {
+      await api(`/api/admin/promos/${btn.dataset.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ showOnHomepage: btn.dataset.live !== "true" })
+      });
+      toast("Homepage promo visibility updated");
       renderPromos();
     };
   });
@@ -674,8 +693,10 @@ function renderSelectedProduct() {
   els.manageCategory.value = p.category;
   els.managePrice.value = p.price;
   els.manageUnit.value = p.unit;
+  els.manageDescription.value = p.description || "";
   els.manageStock.value = p.stock;
   els.manageFeatured.value = String(Boolean(p.featured));
+  els.manageSignatureShowcase.value = String(Boolean(p.signatureShowcase));
 
   els.variantList.innerHTML = (p.variants || []).length
     ? p.variants
@@ -828,7 +849,8 @@ els.promoForm.onsubmit = async (e) => {
         discountPercent: Number(els.promoDiscount.value),
         minOrderValue: Number(els.promoMinOrder.value || 0),
         maxUses: Number(els.promoMaxUses.value),
-        expiresAt: els.promoExpiry.value
+        expiresAt: els.promoExpiry.value,
+        showOnHomepage: Boolean(els.promoLive.checked)
       })
     });
     els.promoForm.reset();
@@ -854,8 +876,10 @@ els.productForm.onsubmit = async (e) => {
     formData.append("category", els.productCategory.value.trim());
     formData.append("price", els.productPrice.value.trim());
     formData.append("unit", els.productUnit.value.trim() || "kg");
+    formData.append("description", els.productDescription.value.trim());
     formData.append("stock", els.productStock.value.trim());
     formData.append("featured", els.productFeatured.value);
+    formData.append("signatureShowcase", els.productSignatureShowcase.value);
     formData.append("variantsJson", els.productVariants.value.trim() || "[]");
     const imageFile = els.productImage.files && els.productImage.files[0];
     if (!imageFile) throw new Error("Please select product image");
@@ -863,8 +887,10 @@ els.productForm.onsubmit = async (e) => {
     await api("/api/admin/products", { method: "POST", body: formData });
     els.productForm.reset();
     els.productUnit.value = "kg";
+    els.productDescription.value = "";
     els.productStock.value = "100";
     els.productFeatured.value = "false";
+    els.productSignatureShowcase.value = "false";
     toast("Product added");
     await Promise.all([refreshProducts(), renderDashboard()]);
   } catch (err) {
@@ -891,8 +917,10 @@ els.manageProductForm.onsubmit = async (e) => {
     formData.append("category", els.manageCategory.value.trim());
     formData.append("price", els.managePrice.value.trim());
     formData.append("unit", els.manageUnit.value.trim());
+    formData.append("description", els.manageDescription.value.trim());
     formData.append("stock", els.manageStock.value.trim());
     formData.append("featured", els.manageFeatured.value);
+    formData.append("signatureShowcase", els.manageSignatureShowcase.value);
     await api(`/api/admin/products/${p.id}`, { method: "PUT", body: formData });
     toast("Product updated");
     await Promise.all([refreshProducts(), renderDashboard()]);
