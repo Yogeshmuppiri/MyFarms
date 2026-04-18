@@ -451,7 +451,7 @@ export default function App() {
             disabled={p.outOfStock}
             onClick={(e) => {
               e.stopPropagation();
-              openProductPreview(p);
+              addToCart(p);
             }}
           >
             {p.outOfStock ? "Unavailable" : "Add to Cart"}
