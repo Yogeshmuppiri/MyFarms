@@ -11,7 +11,8 @@ const userSchema = new mongoose.Schema(
     emailVerificationCodeHash: { type: String, default: null },
     emailVerificationExpiresAt: { type: Date, default: null },
     resetTokenHash: { type: String, default: null },
-    resetTokenExpiresAt: { type: Date, default: null }
+    resetTokenExpiresAt: { type: Date, default: null },
+    walletCoins: { type: Number, default: 0, min: 0 }
   },
   { timestamps: true }
 );
@@ -65,6 +66,9 @@ const orderSchema = new mongoose.Schema(
     subtotalAmount: { type: Number, default: 0 },
     promoCode: { type: String, default: null },
     discountAmount: { type: Number, default: 0 },
+    walletCoinsRedeemed: { type: Number, default: 0, min: 0 },
+    walletDiscountAmount: { type: Number, default: 0, min: 0 },
+    coinsEarned: { type: Number, default: 0, min: 0 },
     taxAmount: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },
     status: { type: String, default: "PLACED" },
@@ -84,6 +88,18 @@ const promoCodeSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true },
     active: { type: Boolean, default: true },
     showOnHomepage: { type: Boolean, default: false }
+  },
+  { timestamps: true }
+);
+
+const walletTransactionSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null },
+    type: { type: String, enum: ["EARN", "REDEEM"], required: true },
+    coins: { type: Number, required: true },
+    description: { type: String, required: true, trim: true },
+    balanceAfter: { type: Number, required: true, min: 0 }
   },
   { timestamps: true }
 );
@@ -109,6 +125,7 @@ const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
 const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
 const PromoCode = mongoose.models.PromoCode || mongoose.model("PromoCode", promoCodeSchema);
+const WalletTransaction = mongoose.models.WalletTransaction || mongoose.model("WalletTransaction", walletTransactionSchema);
 const Complaint = mongoose.models.Complaint || mongoose.model("Complaint", complaintSchema);
 
 async function seedProductsIfNeeded() {
@@ -141,6 +158,7 @@ async function initDb() {
   await Product.updateMany({ description: { $exists: false } }, { $set: { description: "" } });
   await Product.updateMany({ orderCount: { $exists: false } }, { $set: { orderCount: 0 } });
   await Product.updateMany({ forceOutOfStock: { $exists: false } }, { $set: { forceOutOfStock: false } });
+  await User.updateMany({ walletCoins: { $exists: false } }, { $set: { walletCoins: 0 } });
   await PromoCode.updateMany({ showOnHomepage: { $exists: false } }, { $set: { showOnHomepage: false } });
   await Product.updateMany(
     {},
@@ -167,5 +185,5 @@ async function initDb() {
 
 module.exports = {
   initDb,
-  models: { User, Product, Order, PromoCode, Complaint }
+  models: { User, Product, Order, PromoCode, WalletTransaction, Complaint }
 };

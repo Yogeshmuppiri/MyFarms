@@ -100,9 +100,15 @@ function statusLabel(status) {
   return status || "Placed";
 }
 
+function isDeliveredStatus(status) {
+  const normalized = String(status || "").trim().toUpperCase();
+  return normalized.includes("DELIVERED");
+}
+
 const TAX_RATE = 0.05;
 const CUSTOMER_IDLE_MS = 30 * 60 * 1000;
 const LAST_ACTIVITY_KEY = "myfarms_last_activity_at";
+const WALLET_COINS_PER_RUPEE = 50;
 const DEFAULT_SEARCH_HINTS = [
   "Search for milk",
   "Search for eggs",
@@ -124,6 +130,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [imageFiles, setImageFiles] = useState([]);
   const [livePromos, setLivePromos] = useState([]);
+  const [wallet, setWallet] = useState({ balance: 0, transactions: [], rewardRate: null });
   const [cart, setCart] = useState([]);
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState("login");
@@ -131,6 +138,8 @@ export default function App() {
   const [sortBy, setSortBy] = useState("none");
   const [featuredOnly, setFeaturedOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [isVoiceListening, setIsVoiceListening] = useState(false);
   const [animatedSearchHint, setAnimatedSearchHint] = useState(DEFAULT_SEARCH_HINTS[0]);
   const [orders, setOrders] = useState([]);
   const [complaints, setComplaints] = useState([]);
@@ -143,8 +152,10 @@ export default function App() {
   const [showCheckout, setShowCheckout] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const [showOrderHistory, setShowOrderHistory] = useState(false);
-  const [showMyComplaints, setShowMyComplaints] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
+  const [showMainMenu, setShowMainMenu] = useState(false);
+  const [showMenuOrders, setShowMenuOrders] = useState(false);
+  const [accountPanel, setAccountPanel] = useState(null);
   const [showComplaint, setShowComplaint] = useState(false);
   const [expandedOrders, setExpandedOrders] = useState({});
   const [heroCarouselIndex, setHeroCarouselIndex] = useState(0);
@@ -159,6 +170,7 @@ export default function App() {
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isComplaintSubmitting, setIsComplaintSubmitting] = useState(false);
   const lastActivityRef = useRef(Date.now());
+  const voiceRecognitionRef = useRef(null);
   const productsSectionRef = useRef(null);
 
   const [previewProduct, setPreviewProduct] = useState(null);
@@ -174,6 +186,7 @@ export default function App() {
     contactNumber: "",
     tipAmount: "",
     promoCode: "",
+    useWalletCoins: false,
     paymentMethod: "COD",
     address: ""
   });
@@ -253,7 +266,13 @@ export default function App() {
   const discountAmount = Number(promoPreview.discountAmount || 0);
   const taxableAmount = cartSubtotal - discountAmount;
   const taxAmount = taxableAmount * TAX_RATE;
-  const checkoutTotal = taxableAmount + taxAmount + (Number.isFinite(parsedTip) ? parsedTip : 0);
+  const checkoutTotalBeforeWallet = taxableAmount + taxAmount + (Number.isFinite(parsedTip) ? parsedTip : 0);
+  const walletBalance = Math.max(0, Math.floor(Number(wallet.balance || user?.walletCoins || 0)));
+  const walletDiscountCapacity = Math.floor(walletBalance / WALLET_COINS_PER_RUPEE);
+  const walletRedeemEstimate = checkout.useWalletCoins ? Math.min(walletDiscountCapacity, Math.floor(checkoutTotalBeforeWallet)) : 0;
+  const walletCoinsUsedEstimate = walletRedeemEstimate * WALLET_COINS_PER_RUPEE;
+  const checkoutTotal = Math.max(0, checkoutTotalBeforeWallet - walletRedeemEstimate);
+  const coinsEarnEstimate = Math.floor(Math.max(0, taxableAmount - walletRedeemEstimate) / WALLET_COINS_PER_RUPEE);
 
   function showToast(message) {
     setToast(message);
@@ -272,6 +291,43 @@ export default function App() {
     }
     setCheckout((prev) => ({ ...prev, fullName: prev.fullName || user.name || "" }));
     setShowCheckout(true);
+  }
+
+  function startVoiceSearch() {
+    if (!voiceSupported) {
+      showToast("Voice search is not supported in this browser");
+      return;
+    }
+
+    const recognition = voiceRecognitionRef.current;
+    if (!recognition) {
+      showToast("Voice search is not available right now");
+      return;
+    }
+
+    if (isVoiceListening) {
+      recognition.stop();
+      return;
+    }
+
+    try {
+      recognition.start();
+    } catch {
+      // Start can throw when called repeatedly; let onend reset state.
+    }
+  }
+
+  function openComplaintFlow() {
+    const latestOrder = orders && orders.length ? `#${orders[0].id.slice(-6).toUpperCase()}` : "";
+    setComplaintForm((s) => ({ ...s, orderNumber: s.orderNumber || latestOrder }));
+    setShowComplaint(true);
+  }
+
+  function openAccountPanel(panel) {
+    setAccountPanel(panel);
+    setShowMainMenu(false);
+    if (panel === "orders") loadOrders();
+    if (panel === "complaints") loadComplaints();
   }
 
   function openProductPreview(product) {
@@ -340,6 +396,12 @@ export default function App() {
     });
 
     showToast("Added to cart");
+  }
+
+  function addProductDirectly(product) {
+    if (!product) return;
+    const firstAvailableVariant = (product.variants || []).find((v) => Number(v.stock || 0) > 0);
+    addToCart(product, firstAvailableVariant || null);
   }
 
   async function applyPromoCode() {
@@ -451,7 +513,7 @@ export default function App() {
             disabled={p.outOfStock}
             onClick={(e) => {
               e.stopPropagation();
-              addToCart(p);
+              addProductDirectly(p);
             }}
           >
             {p.outOfStock ? "Unavailable" : "Add to Cart"}
@@ -486,6 +548,24 @@ export default function App() {
       setComplaints(data.complaints || []);
     } catch {
       setComplaints([]);
+    }
+  }
+
+  async function loadWallet() {
+    if (!user) {
+      setWallet({ balance: 0, transactions: [], rewardRate: null });
+      return;
+    }
+
+    try {
+      const data = await api("/api/wallet");
+      setWallet({
+        balance: Number(data.balance || 0),
+        transactions: data.transactions || [],
+        rewardRate: data.rewardRate || null
+      });
+    } catch {
+      setWallet({ balance: Number(user.walletCoins || 0), transactions: [], rewardRate: null });
     }
   }
 
@@ -624,17 +704,65 @@ export default function App() {
   }, [searchQuery, searchHints]);
 
   useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceSupported(false);
+      voiceRecognitionRef.current = null;
+      return undefined;
+    }
+
+    setVoiceSupported(true);
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-IN";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setIsVoiceListening(true);
+    recognition.onresult = (event) => {
+      const transcript = String(event?.results?.[0]?.[0]?.transcript || "").trim();
+      if (!transcript) return;
+      setSearchQuery(transcript);
+      showToast(`Searching: ${transcript}`);
+    };
+    recognition.onerror = (event) => {
+      if (event?.error === "aborted" || event?.error === "no-speech") return;
+      showToast("Unable to capture voice. Please try again.");
+    };
+    recognition.onend = () => setIsVoiceListening(false);
+
+    voiceRecognitionRef.current = recognition;
+
+    return () => {
+      recognition.onstart = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.stop();
+      voiceRecognitionRef.current = null;
+      setIsVoiceListening(false);
+    };
+  }, []);
+
+  useEffect(() => {
     loadOrders();
     loadComplaints();
+    loadWallet();
   }, [user]);
 
   useEffect(() => {
     if (!user) {
-      setShowOrderHistory(false);
-      setShowMyComplaints(false);
       setExpandedOrders({});
+      setShowMainMenu(false);
+      setShowMenuOrders(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!showMainMenu) return undefined;
+    const closeMenuOnScroll = () => setShowMainMenu(false);
+    window.addEventListener("scroll", closeMenuOnScroll, { passive: true });
+    return () => window.removeEventListener("scroll", closeMenuOnScroll);
+  }, [showMainMenu]);
 
   useEffect(() => {
     if (!user) return;
@@ -777,20 +905,6 @@ export default function App() {
           <div className="nav-actions" id="navActions">
             {user ? (
               <div className="nav-user-block">
-                <div className="nav-user-actions">
-                  <a className="btn-ghost link-btn" href="/about.html">
-                    About Us
-                  </a>
-                  <button className="btn-ghost" onClick={() => setShowProfile(true)}>
-                    Edit Profile
-                  </button>
-                  <button
-                    className="btn-ghost"
-                    onClick={() => logoutUser("Logged out")}
-                  >
-                    Logout
-                  </button>
-                </div>
                 <span className="small muted nav-welcome">Hi {user.name}, thanks for choosing My Farms</span>
               </div>
             ) : (
@@ -803,6 +917,193 @@ export default function App() {
                 </button>
               </>
             )}
+            {user ? (
+              <div className="menu-shell">
+                <button
+                  className={`hamburger-btn ${showMainMenu ? "active" : ""}`}
+                  type="button"
+                  aria-label="Open customer menu"
+                  aria-expanded={showMainMenu}
+                  onClick={() => setShowMainMenu((v) => !v)}
+                >
+                  <span />
+                  <span />
+                  <span />
+                </button>
+                {showMainMenu ? (
+                  <div className="account-menu">
+                  <div className="account-menu-head">
+                    <div>
+                      <strong>My Farms Dashboard</strong>
+                    </div>
+                  </div>
+                  <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowProfile(true);
+                          setShowMainMenu(false);
+                        }}
+                      >
+                        <span className="account-menu-label">
+                          <span className="account-menu-icon" aria-hidden="true">
+                            <img
+                              src="/resources/profile.png"
+                              alt=""
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.parentElement.style.display = "none";
+                              }}
+                            />
+                          </span>
+                          Edit Profile
+                        </span>
+                      </button>
+                      <button type="button" onClick={() => setShowMenuOrders((v) => !v)}>
+                        <span className="account-menu-label">
+                          <span className="account-menu-icon" aria-hidden="true">
+                            <img
+                              src="/resources/myorders.png"
+                              alt=""
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.parentElement.style.display = "none";
+                              }}
+                            />
+                          </span>
+                          My Orders
+                        </span>
+                        <span>{showMenuOrders ? "-" : "+"}</span>
+                      </button>
+                      {showMenuOrders ? (
+                        <div className="account-submenu">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              openAccountPanel("orders");
+                          }}
+                          >
+                            <span className="account-menu-label">
+                            <span className="account-menu-icon" aria-hidden="true">
+                              <img
+                                src="/resources/history.png"
+                                alt=""
+                                loading="lazy"
+                                onError={(e) => {
+                                  e.currentTarget.parentElement.style.display = "none";
+                                }}
+                              />
+                            </span>
+                            View Order History
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                              openComplaintFlow();
+                              setShowMainMenu(false);
+                          }}
+                        >
+                          <span className="account-menu-label">
+                            <span className="account-menu-icon" aria-hidden="true">
+                              <img
+                                src="/resources/orderissue.png"
+                                alt=""
+                                loading="lazy"
+                                onError={(e) => {
+                                  e.currentTarget.parentElement.style.display = "none";
+                                }}
+                              />
+                            </span>
+                            Having issue with your current order?
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                            onClick={() => {
+                              openAccountPanel("complaints");
+                          }}
+                        >
+                          <span className="account-menu-label">
+                            <span className="account-menu-icon" aria-hidden="true">
+                              <img
+                                src="/resources/complain.png"
+                                alt=""
+                                loading="lazy"
+                                onError={(e) => {
+                                  e.currentTarget.parentElement.style.display = "none";
+                                }}
+                              />
+                            </span>
+                            View My Complaints
+                          </span>
+                        </button>
+                      </div>
+                    ) : null}
+                    <a href="/about.html">
+                      <span className="account-menu-label">
+                        <span className="account-menu-icon" aria-hidden="true">
+                          <img
+                            src="/resources/aboutus.png"
+                            alt=""
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.parentElement.style.display = "none";
+                            }}
+                          />
+                        </span>
+                        About Us
+                      </span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                          setShowMainMenu(false);
+                          setShowWallet(true);
+                          loadWallet();
+                      }}
+                    >
+                      <span className="account-menu-label">
+                        <span className="account-menu-icon" aria-hidden="true">
+                          <img
+                            src="/resources/wallet.png"
+                            alt=""
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.parentElement.style.display = "none";
+                            }}
+                          />
+                        </span>
+                        Wallet Coins
+                      </span>
+                      <span>{walletBalance}</span>
+                    </button>
+                    <button
+                      type="button"
+                        onClick={() => {
+                          setShowMainMenu(false);
+                          logoutUser("Logged out");
+                      }}
+                    >
+                      <span className="account-menu-label">
+                        <span className="account-menu-icon" aria-hidden="true">
+                          <img
+                            src="/resources/logout.png"
+                            alt=""
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.parentElement.style.display = "none";
+                            }}
+                          />
+                        </span>
+                        Logout
+                      </span>
+                    </button>
+                  </>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </nav>
 
@@ -815,7 +1116,7 @@ export default function App() {
               delivered to your doorstep.
             </p>
             <div className="hero-points">
-              <span>Get delivered within 23 hours</span>
+              <span>Get delivered within 15 hours</span>
               <span>Chemical-Free Priority</span>
               <span>Traditional Bull-Driven Oil</span>
             </div>
@@ -905,13 +1206,27 @@ export default function App() {
         <section className={`controls ${isFilterCompact ? "compact" : ""}`} id="shopSection">
           <h2>Shop Products</h2>
           <div className="controls-right">
-            <input
-              id="productSearch"
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={animatedSearchHint}
-            />
+            <div className="search-with-voice">
+              <input
+                id="productSearch"
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={animatedSearchHint}
+              />
+              <button
+                className={`voice-search-btn ${isVoiceListening ? "active" : ""}`}
+                type="button"
+                aria-label={isVoiceListening ? "Stop voice search" : "Start voice search"}
+                title={isVoiceListening ? "Listening..." : "Voice search"}
+                onClick={startVoiceSearch}
+                disabled={!voiceSupported}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 15a3.8 3.8 0 0 0 3.8-3.8V6.8a3.8 3.8 0 1 0-7.6 0v4.4A3.8 3.8 0 0 0 12 15Zm6.2-4a1 1 0 0 0-2 0 4.2 4.2 0 1 1-8.4 0 1 1 0 1 0-2 0A6.2 6.2 0 0 0 11 17.1V20H8.8a1 1 0 1 0 0 2h6.4a1 1 0 1 0 0-2H13v-2.9a6.2 6.2 0 0 0 5.2-6.1Z" />
+                </svg>
+              </button>
+            </div>
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
               <option value="none">Sort: None</option>
               <option value="priceAsc">Sort: Price Low to High</option>
@@ -1041,111 +1356,6 @@ export default function App() {
           </div>
         ) : null}
 
-        <section className="orders-section reveal-on-scroll">
-          <h3>My Orders</h3>
-          {!user ? <p className="muted small">Login to view your orders.</p> : null}
-          {user ? (
-            <button className="btn-ghost" onClick={() => setShowOrderHistory((v) => !v)}>
-              {showOrderHistory ? "Hide Order History" : "View Order History"}
-            </button>
-          ) : null}
-          {user && showOrderHistory ? (
-            <div id="ordersList" className="orders-list">
-              {!orders.length ? (
-                <p className="muted small">No orders yet.</p>
-              ) : (
-                orders.map((o) => (
-                  <div className="order-card" key={o.id}>
-                    <strong>Order #{o.id.slice(-6).toUpperCase()}</strong>
-                    <div className="small muted">{new Date(o.createdAt).toLocaleString()}</div>
-                    <div className="small">Status: {statusLabel(o.status)}</div>
-                    <div className="small">Payment: {o.paymentMethod}</div>
-                    <div className="small">Address: {o.deliveryAddress}</div>
-                    {o.promoCode ? <div className="small">Promo: {o.promoCode}</div> : null}
-                    <div className="small">
-                      <strong>Total: Rs.{Number(o.totalAmount).toFixed(2)}</strong>
-                    </div>
-                    <div className="order-actions">
-                      <button
-                        className="btn-ghost small"
-                        onClick={() => setExpandedOrders((current) => ({ ...current, [o.id]: !current[o.id] }))}
-                      >
-                        {expandedOrders[o.id] ? "Hide Items" : "View Items"}
-                      </button>
-                      <button className="btn-ghost small" onClick={() => reorderOrder(o.id)}>Reorder</button>
-                    </div>
-                    {expandedOrders[o.id] ? (
-                      <div className="order-items-preview">
-                        <div className="small order-items-title">Items in this order</div>
-                        {(o.items || []).length ? (
-                          <div className="order-items-list">
-                            {(o.items || []).map((item, index) => (
-                              <div className="order-item-row" key={`${o.id}-${item.productId}-${item.variantName || "base"}-${index}`}>
-                                <div>
-                                  <strong>{item.productName}</strong>
-                                  {item.variantName ? <div className="small muted">{item.variantName}</div> : null}
-                                </div>
-                                <div className="small">Qty: {item.quantity}</div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="small muted">No item details available for this order.</div>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                ))
-              )}
-            </div>
-          ) : null}
-          {user ? (
-            <button
-              className="btn-ghost"
-              onClick={() => {
-                const latestOrder = orders && orders.length ? `#${orders[0].id.slice(-6).toUpperCase()}` : "";
-                setComplaintForm((s) => ({ ...s, orderNumber: s.orderNumber || latestOrder }));
-                setShowComplaint(true);
-              }}
-            >
-              Having issue with your order?
-            </button>
-          ) : null}
-          {user ? (
-            <button className="btn-ghost" onClick={() => setShowMyComplaints((v) => !v)}>
-              {showMyComplaints ? "Hide My Complaints" : "View My Complaints"}
-            </button>
-          ) : null}
-          {user && showMyComplaints ? (
-            <div className="orders-list">
-              {!complaints.length ? (
-                <p className="muted small">No complaints yet.</p>
-              ) : (
-                complaints.map((c) => (
-                  <div className="order-card" key={c.id}>
-                    <strong>Ticket #{c.ticketNumber}</strong>
-                    <div className="small muted">{new Date(c.createdAt).toLocaleString()}</div>
-                    <div className="small">Order: {c.orderNumber}</div>
-                    <div className="small">Status: {c.status}</div>
-                    <div className="small">Issue: {c.issue}</div>
-                    {c.proofImagePath ? (
-                      <div className="small">
-                        <a href={resolveAssetUrl(c.proofImagePath)} target="_blank" rel="noreferrer">
-                          View Uploaded Proof
-                        </a>
-                      </div>
-                    ) : null}
-                    {c.adminReply ? <div className="small"><strong>Support Reply:</strong> {c.adminReply}</div> : null}
-                    <div className="small muted">
-                      Timeline: {(c.timeline || []).map((t) => `${t.label} (${new Date(t.at).toLocaleString()})`).join(" -> ")}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          ) : null}
-        </section>
-
       </main>
 
       <div className="floating-mascot" aria-hidden="true">
@@ -1161,6 +1371,54 @@ export default function App() {
             aria-hidden="true"
           />
         </>
+      ) : null}
+
+      {showWallet && user ? (
+        <div
+          className="modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowWallet(false);
+          }}
+        >
+          <div className="modal-card wallet-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={() => setShowWallet(false)}>x</button>
+            <p className="kicker">My Farms Wallet</p>
+            <h3>Your Coins</h3>
+            <div className="wallet-balance-card">
+              <span>Total Balance</span>
+              <strong>{walletBalance} coins</strong>
+              <p>Earn 2 coins for every Rs.100 spent. Redeem 50 coins for Rs.1 off.</p>
+            </div>
+            <div className="wallet-rate-grid">
+              <div>
+                <span>Earn Rate</span>
+                <strong>0.02 coin / Rs.1</strong>
+              </div>
+              <div>
+                <span>Redeem Value</span>
+                <strong>50 coins = Rs.1</strong>
+              </div>
+            </div>
+            <h4>Coins History</h4>
+            <div className="wallet-history">
+              {wallet.transactions.length ? (
+                wallet.transactions.map((tx) => (
+                  <div className="wallet-history-row" key={tx.id}>
+                    <div>
+                      <strong>{tx.description}</strong>
+                      <span>{new Date(tx.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div className={tx.type === "EARN" ? "wallet-positive" : "wallet-negative"}>
+                      {tx.coins > 0 ? "+" : ""}{tx.coins}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="muted small">No wallet activity yet. Place an order to start earning coins.</p>
+              )}
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {showAuth ? (
@@ -1559,6 +1817,7 @@ export default function App() {
                     contactNumber: checkout.contactNumber.trim(),
                     tipAmount: Number(checkout.tipAmount || 0),
                     promoCode: checkout.promoCode.trim(),
+                    useWalletCoins: Boolean(checkout.useWalletCoins),
                     paymentMethod: checkout.paymentMethod,
                     address: checkout.address,
                     items: cart.map((c) => ({
@@ -1587,14 +1846,18 @@ export default function App() {
                   });
 
                   setCart([]);
-                  setCheckout((prev) => ({ ...prev, tipAmount: "", promoCode: "" }));
+                  setCheckout((prev) => ({ ...prev, tipAmount: "", promoCode: "", useWalletCoins: false }));
                   setPromoPreview({ valid: false, code: "", discountAmount: 0, message: "No promo applied" });
+                  if (data.walletBalance !== undefined) {
+                    setWallet((prev) => ({ ...prev, balance: Number(data.walletBalance || 0) }));
+                  }
                   setShowCheckout(false);
                   setCelebrationOrderCode(data.orderId.slice(-6).toUpperCase());
                   setShowOrderCelebration(true);
                   setTimeout(() => setShowOrderCelebration(false), 2600);
                   showToast(`Order placed successfully (#${data.orderId.slice(-6).toUpperCase()})`);
                   loadOrders();
+                  loadWallet();
                 } catch (err) {
                   showToast(err.message);
                 } finally {
@@ -1651,6 +1914,22 @@ export default function App() {
                   {promoPreview.message || "Promo will be validated at checkout"}
                 </div>
               </div>
+              <label className="wallet-checkout-option">
+                <input
+                  type="checkbox"
+                  checked={checkout.useWalletCoins}
+                  disabled={!walletBalance}
+                  onChange={(e) => setCheckout((s) => ({ ...s, useWalletCoins: e.target.checked }))}
+                />
+                <span>
+                  Use wallet coins
+                  <small>
+                    {walletBalance
+                      ? `${walletBalance} coins available. This order can use ${walletCoinsUsedEstimate || Math.min(walletBalance, Math.floor(checkoutTotalBeforeWallet) * WALLET_COINS_PER_RUPEE)} coins for Rs.${walletRedeemEstimate || Math.min(walletDiscountCapacity, Math.floor(checkoutTotalBeforeWallet))} off.`
+                      : "No wallet coins available yet."}
+                  </small>
+                </span>
+              </label>
               <div className="field">
                 <label>Payment Method</label>
                 <select
@@ -1683,6 +1962,10 @@ export default function App() {
                   <strong>-Rs.{discountAmount.toFixed(2)}</strong>
                 </div>
                 <div className="total-row">
+                  <span>Wallet Coins</span>
+                  <strong>-Rs.{walletRedeemEstimate.toFixed(2)}</strong>
+                </div>
+                <div className="total-row">
                   <span>Tax (5%)</span>
                   <strong>Rs.{taxAmount.toFixed(2)}</strong>
                 </div>
@@ -1693,6 +1976,9 @@ export default function App() {
                 <div className="total-row">
                   <span>Grand Total</span>
                   <strong>Rs.{checkoutTotal.toFixed(2)}</strong>
+                </div>
+                <div className="wallet-earn-note">
+                  You will earn {coinsEarnEstimate} coin{coinsEarnEstimate === 1 ? "" : "s"} from this order.
                 </div>
               </div>
               <button className="btn-primary" type="submit" disabled={isPlacingOrder}>
@@ -1727,6 +2013,118 @@ export default function App() {
             <h3>Order Placed Successfully</h3>
             <p>Your fresh products are confirmed and being prepared.</p>
             <strong>Order #{celebrationOrderCode}</strong>
+          </div>
+        </div>
+      ) : null}
+
+      {accountPanel ? (
+        <div
+          className="modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setAccountPanel(null);
+          }}
+        >
+          <div className="modal-card account-panel-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={() => setAccountPanel(null)}>x</button>
+            <p className="kicker">Customer Desk</p>
+            <h3>{accountPanel === "orders" ? "Order History" : "My Complaints"}</h3>
+            {!user ? (
+              <p className="muted small">Login to view this section.</p>
+            ) : accountPanel === "orders" ? (
+              <div className="account-panel-list">
+                {!orders.length ? (
+                  <p className="muted small">No orders yet.</p>
+                ) : (
+                  orders.map((o) => (
+                    <div className={`order-card ${isDeliveredStatus(o.status) ? "order-card-delivered" : "order-card-pending"}`} key={`panel-${o.id}`}>
+                      <strong>Order #{o.id.slice(-6).toUpperCase()}</strong>
+                      <div className="small muted">{new Date(o.createdAt).toLocaleString()}</div>
+                      <div className="small">
+                        Status:{" "}
+                        <span className={`order-status-pill ${isDeliveredStatus(o.status) ? "is-delivered" : "is-pending"}`}>
+                          {statusLabel(o.status)}
+                        </span>
+                      </div>
+                      <div className="small">Payment: {o.paymentMethod}</div>
+                      <div className="small">Address: {o.deliveryAddress}</div>
+                      {o.promoCode ? <div className="small">Promo: {o.promoCode}</div> : null}
+                      <div className="small">
+                        <strong>Total: Rs.{Number(o.totalAmount).toFixed(2)}</strong>
+                      </div>
+                      <div className="order-actions">
+                        <button
+                          className="btn-ghost small"
+                          onClick={() => setExpandedOrders((current) => ({ ...current, [o.id]: !current[o.id] }))}
+                        >
+                          {expandedOrders[o.id] ? "Hide Items" : "View Items"}
+                        </button>
+                        <button className="btn-ghost small" onClick={() => reorderOrder(o.id)}>Reorder</button>
+                        <button
+                          className="btn-ghost small"
+                          onClick={() => {
+                            setAccountPanel(null);
+                            setComplaintForm((s) => ({
+                              ...s,
+                              orderNumber: s.orderNumber || `#${o.id.slice(-6).toUpperCase()}`
+                            }));
+                            setShowComplaint(true);
+                          }}
+                        >
+                          Report Issue
+                        </button>
+                      </div>
+                      {expandedOrders[o.id] ? (
+                        <div className="order-items-preview">
+                          <div className="small order-items-title">Items in this order</div>
+                          {(o.items || []).length ? (
+                            <div className="order-items-list">
+                              {(o.items || []).map((item, index) => (
+                                <div className="order-item-row" key={`panel-${o.id}-${item.productId}-${item.variantName || "base"}-${index}`}>
+                                  <div>
+                                    <strong>{item.productName}</strong>
+                                    {item.variantName ? <div className="small muted">{item.variantName}</div> : null}
+                                  </div>
+                                  <div className="small">Qty: {item.quantity}</div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="small muted">No item details available for this order.</div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="account-panel-list">
+                {!complaints.length ? (
+                  <p className="muted small">No complaints yet.</p>
+                ) : (
+                  complaints.map((c) => (
+                    <div className="order-card" key={`panel-${c.id}`}>
+                      <strong>Ticket #{c.ticketNumber}</strong>
+                      <div className="small muted">{new Date(c.createdAt).toLocaleString()}</div>
+                      <div className="small">Order: {c.orderNumber}</div>
+                      <div className="small">Status: {c.status}</div>
+                      <div className="small">Issue: {c.issue}</div>
+                      {c.proofImagePath ? (
+                        <div className="small">
+                          <a href={resolveAssetUrl(c.proofImagePath)} target="_blank" rel="noreferrer">
+                            View Uploaded Proof
+                          </a>
+                        </div>
+                      ) : null}
+                      {c.adminReply ? <div className="small"><strong>Support Reply:</strong> {c.adminReply}</div> : null}
+                      <div className="small muted">
+                        Timeline: {(c.timeline || []).map((t) => `${t.label} (${new Date(t.at).toLocaleString()})`).join(" -> ")}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
       ) : null}

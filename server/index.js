@@ -234,8 +234,18 @@ function getSessionUser(user) {
     name: user.name,
     email: user.email,
     mobileNumber: user.mobileNumber || "",
-    isEmailVerified: isUserEmailVerified(user)
+    isEmailVerified: isUserEmailVerified(user),
+    walletCoins: Math.max(0, Math.floor(Number(user.walletCoins || 0)))
   };
+}
+
+function calculateEarnedCoins(amount) {
+  const eligibleAmount = Math.max(0, Number(amount || 0));
+  return Math.floor(eligibleAmount / 50);
+}
+
+function calculateWalletDiscountFromCoins(coins) {
+  return Math.floor(Math.max(0, Number(coins || 0)) / 50);
 }
 
 async function issueEmailVerificationForUser(user) {
@@ -734,6 +744,36 @@ app.post("/api/admin/logout", (req, res) => {
 
 app.get("/api/admin/me", (req, res) => {
   res.json({ admin: req.session.admin || null });
+});
+
+app.get("/api/wallet", requireAuth, async (req, res) => {
+  const user = await models.User.findById(req.session.user.id).select("walletCoins").lean();
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const transactions = await models.WalletTransaction.find({ userId: req.session.user.id })
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .lean();
+
+  res.json({
+    balance: Math.max(0, Math.floor(Number(user.walletCoins || 0))),
+    rewardRate: {
+      coinsPerHundred: 2,
+      coinsPerRupee: 0.02,
+      rupeesPerCoinEarned: 50,
+      coinsPerRupeeRedeemed: 50,
+      coinValueInRupees: 0.02
+    },
+    transactions: transactions.map((tx) => ({
+      id: String(tx._id),
+      orderId: tx.orderId ? String(tx.orderId) : null,
+      type: tx.type,
+      coins: tx.coins,
+      description: tx.description,
+      balanceAfter: tx.balanceAfter,
+      createdAt: tx.createdAt
+    }))
+  });
 });
 
 app.get("/api/admin/products", requireAdmin, async (_req, res) => {
@@ -1240,7 +1280,7 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
 
 app.post("/api/orders", requireAuth, async (req, res) => {
   try {
-    const { items, paymentMethod, address, fullName, contactNumber, tipAmount, promoCode } = req.body;
+    const { items, paymentMethod, address, fullName, contactNumber, tipAmount, promoCode, useWalletCoins } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Cart items are required" });
@@ -1320,7 +1360,12 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       });
     }
 
-    const user = req.session.user;
+    const sessionUser = req.session.user;
+    const userDoc = await models.User.findById(sessionUser.id).select("email name walletCoins").lean();
+    if (!userDoc) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
     const finalAddress = paymentMethod === "PICKUP" ? "Store Pickup" : address.trim();
     const normalizedFullName = String(fullName).trim();
     const normalizedContactNumber = String(contactNumber).trim();
@@ -1329,11 +1374,18 @@ app.post("/api/orders", requireAuth, async (req, res) => {
     const taxableAmount = Number((subtotalAmount - discountAmount).toFixed(2));
     const taxAmount = Number((taxableAmount * TAX_RATE).toFixed(2));
 
-    const finalTotal = Number((taxableAmount + taxAmount + parsedTip).toFixed(2));
+    const grossTotal = Number((taxableAmount + taxAmount + parsedTip).toFixed(2));
+    const walletBalance = Math.max(0, Math.floor(Number(userDoc.walletCoins || 0)));
+    const maxDiscountFromWallet = calculateWalletDiscountFromCoins(walletBalance);
+    const walletDiscountAmount = useWalletCoins ? Math.min(maxDiscountFromWallet, Math.floor(grossTotal)) : 0;
+    const walletCoinsRedeemed = walletDiscountAmount * 50;
+    const finalTotal = Number(Math.max(0, grossTotal - walletDiscountAmount).toFixed(2));
+    const coinsEarned = calculateEarnedCoins(Math.max(0, taxableAmount - walletDiscountAmount));
+
     const order = await models.Order.create({
-      userId: user.id,
+      userId: sessionUser.id,
       customerName: normalizedFullName,
-      customerEmail: user.email,
+      customerEmail: userDoc.email,
       customerPhone: normalizedContactNumber,
       tipAmount: Number(parsedTip.toFixed(2)),
       deliveryAddress: finalAddress,
@@ -1341,6 +1393,9 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       subtotalAmount: Number(subtotalAmount.toFixed(2)),
       promoCode: promo ? promo.code : null,
       discountAmount,
+      walletCoinsRedeemed,
+      walletDiscountAmount,
+      coinsEarned,
       taxAmount,
       totalAmount: finalTotal,
       status: "PLACED",
@@ -1357,7 +1412,7 @@ app.post("/api/orders", requireAuth, async (req, res) => {
     const emailPayload = {
       orderId: String(order._id),
       customerName: normalizedFullName,
-      customerEmail: user.email,
+      customerEmail: userDoc.email,
       customerPhone: normalizedContactNumber,
       tipAmount: Number(parsedTip.toFixed(2)),
       paymentMethod,
@@ -1366,6 +1421,9 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       subtotalAmount: Number(subtotalAmount.toFixed(2)),
       promoCode: promo ? promo.code : null,
       discountAmount,
+      walletCoinsRedeemed,
+      walletDiscountAmount,
+      coinsEarned,
       taxAmount,
       totalAmount: finalTotal.toFixed(2)
     };
@@ -1398,10 +1456,44 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       await models.PromoCode.updateOne({ _id: promo._id }, { $inc: { usedCount: 1 } });
     }
 
+    let nextWalletBalance = walletBalance;
+    const walletTransactions = [];
+    if (walletCoinsRedeemed > 0) {
+      nextWalletBalance -= walletCoinsRedeemed;
+      walletTransactions.push({
+        userId: sessionUser.id,
+        orderId: order._id,
+        type: "REDEEM",
+        coins: -walletCoinsRedeemed,
+        description: `Redeemed on order #${String(order._id).slice(-6).toUpperCase()}`,
+        balanceAfter: nextWalletBalance
+      });
+    }
+    if (coinsEarned > 0) {
+      nextWalletBalance += coinsEarned;
+      walletTransactions.push({
+        userId: sessionUser.id,
+        orderId: order._id,
+        type: "EARN",
+        coins: coinsEarned,
+        description: `Earned from order #${String(order._id).slice(-6).toUpperCase()}`,
+        balanceAfter: nextWalletBalance
+      });
+    }
+    if (walletTransactions.length) {
+      await models.User.updateOne({ _id: sessionUser.id }, { $set: { walletCoins: nextWalletBalance } });
+      await models.WalletTransaction.insertMany(walletTransactions);
+      req.session.user = { ...req.session.user, walletCoins: nextWalletBalance };
+    }
+
     res.status(201).json({
       orderId: String(order._id),
       subtotalAmount: order.subtotalAmount,
       discountAmount: order.discountAmount,
+      walletCoinsRedeemed,
+      walletDiscountAmount,
+      coinsEarned,
+      walletBalance: nextWalletBalance,
       taxAmount: order.taxAmount,
       totalAmount: finalTotal,
       status: "PLACED"
@@ -1431,7 +1523,7 @@ app.get("/api/orders/my", requireAuth, async (req, res) => {
   await cleanupOldOrders();
   const orders = await models.Order.find({ userId: req.session.user.id })
     .sort({ createdAt: -1 })
-    .select("deliveryAddress paymentMethod subtotalAmount discountAmount taxAmount tipAmount totalAmount status cancelNote createdAt promoCode items")
+    .select("deliveryAddress paymentMethod subtotalAmount discountAmount walletCoinsRedeemed walletDiscountAmount coinsEarned taxAmount tipAmount totalAmount status cancelNote createdAt promoCode items")
     .lean();
 
   res.json({
@@ -1441,6 +1533,9 @@ app.get("/api/orders/my", requireAuth, async (req, res) => {
       paymentMethod: o.paymentMethod,
       subtotalAmount: o.subtotalAmount || 0,
       discountAmount: o.discountAmount || 0,
+      walletCoinsRedeemed: o.walletCoinsRedeemed || 0,
+      walletDiscountAmount: o.walletDiscountAmount || 0,
+      coinsEarned: o.coinsEarned || 0,
       taxAmount: o.taxAmount || 0,
       tipAmount: o.tipAmount || 0,
       promoCode: o.promoCode || null,
