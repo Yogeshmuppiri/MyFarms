@@ -793,7 +793,8 @@ export default function App() {
   useEffect(() => {
     const onScroll = () => {
       const productsTop = productsSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
-      setIsFilterCompact(productsTop <= 150);
+      const compactTrigger = window.innerWidth <= 980 ? 340 : 150;
+      setIsFilterCompact(productsTop <= compactTrigger);
     };
 
     onScroll();
@@ -1563,6 +1564,15 @@ export default function App() {
         ) : null}
 
       </main>
+
+      <footer className="brand-footer">
+        <img src="/myfarmslogo.png" alt="My Farms logo" />
+        <div>
+          <strong>My Farms</strong>
+          <span>Fresh essentials, direct from local farms.</span>
+        </div>
+        <small>© {new Date().getFullYear()} My Farms</small>
+      </footer>
 
       <div className="floating-mascot" aria-hidden="true">
         <img className="farmer-mascot-image" src="/resources/farmer-mascot-main.png" alt="" />

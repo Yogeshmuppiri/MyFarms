@@ -1074,6 +1074,9 @@ main > * {
 .controls.compact .freshness-control-wrap {
   width: 0;
   min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
@@ -1093,6 +1096,7 @@ main > * {
 .controls.compact #productSearch {
   min-width: 0;
   width: 100%;
+  padding-right: 2.35rem;
   padding-top: 0.38rem;
   padding-bottom: 0.38rem;
 }
@@ -1100,6 +1104,18 @@ main > * {
 .controls.compact .search-with-voice {
   min-width: 200px;
   width: min(100%, 270px);
+}
+
+.controls.compact .voice-search-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  right: 0.3rem;
+}
+
+.controls.compact .voice-search-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .controls.compact .controls-right select,
@@ -1737,6 +1753,47 @@ main > * {
 
 .mobile-cart-bar {
   display: none;
+}
+
+.brand-footer {
+  width: 100%;
+  margin: 1.4rem 0 0;
+  padding: 1rem clamp(1rem, 6vw, 5rem);
+  display: flex;
+  align-items: center;
+  gap: 0.78rem;
+  border-top: 1px solid rgba(211, 226, 203, 0.86);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 249, 0.52), rgba(239, 248, 234, 0.68));
+  color: #5f6c5b;
+  box-sizing: border-box;
+}
+
+.brand-footer img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.brand-footer div {
+  min-width: 0;
+  display: grid;
+  gap: 0.08rem;
+}
+
+.brand-footer strong {
+  color: #21412d;
+  font-size: 0.98rem;
+}
+
+.brand-footer span,
+.brand-footer small {
+  font-size: 0.82rem;
+}
+
+.brand-footer small {
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .cart-item {
@@ -2813,6 +2870,35 @@ select:disabled {
 .celebration-piece.c8 { --tx: -12px; --ty: -18px; }
 
 @media (max-width: 1200px) {
+  .controls {
+    grid-template-columns: 1fr;
+  }
+
+  .freshness-control-wrap {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 112px;
+    display: block;
+    padding: 0;
+    border-left: 0;
+  }
+
+  .freshness-control {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 86px;
+    grid-template-columns: 72px minmax(0, 1fr);
+    justify-items: center;
+    text-align: center;
+  }
+
+  .freshness-control img {
+    justify-self: start;
+    width: 72px;
+    height: 72px;
+  }
+
   .hero-content {
     grid-template-columns: 1fr;
     align-items: start;
@@ -2880,13 +2966,45 @@ select:disabled {
 
   .controls {
     grid-template-columns: 1fr;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .freshness-control-wrap {
-    justify-content: start;
-    place-items: start;
-    padding-left: 0;
+    width: 100%;
+    grid-column: 1 / -1;
+    min-height: 86px;
+    display: block;
+    margin-top: 0.18rem;
+    padding: 0;
     border-left: 0;
+  }
+
+  .freshness-control {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 86px;
+    grid-template-columns: 72px minmax(0, 1fr);
+    padding: 0.52rem 0.78rem;
+    justify-items: center;
+    text-align: center;
+    border-radius: 16px;
+  }
+
+  .freshness-control img {
+    justify-self: start;
+    width: 72px;
+    height: 72px;
+  }
+
+  .freshness-control span {
+    font-size: 0.76rem;
+  }
+
+  .freshness-control strong {
+    font-size: 0.92rem;
+    line-height: 1.12;
   }
 
   .freshness-grid {
@@ -3017,6 +3135,10 @@ select:disabled {
     padding: 0.5rem 0.58rem;
   }
 
+  .controls.compact .freshness-control-wrap {
+    display: none;
+  }
+
   .controls.compact h2 {
     font-size: 0.9rem;
   }
@@ -3026,10 +3148,24 @@ select:disabled {
     padding-right: 0;
   }
 
+  .controls-right > * {
+    min-width: 0;
+  }
+
+  .search-with-voice {
+    flex: 1 1 100%;
+  }
+
+  .controls-right select {
+    flex: 1 1 150px;
+    width: auto;
+    min-width: 0;
+  }
+
   .freshness-control {
-    width: 168px;
-    min-width: 168px;
-    min-height: 58px;
+    width: 100%;
+    min-width: 0;
+    min-height: 86px;
   }
 
   .controls-right select,
@@ -3157,6 +3293,9 @@ select:disabled {
     gap: 0.55rem;
     padding: 0.68rem 0.65rem;
     border-radius: 16px;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
   }
 
   .controls h2 {
@@ -3169,12 +3308,28 @@ select:disabled {
     padding: 0.48rem 0.5rem;
   }
 
+  .controls.compact .freshness-control-wrap {
+    display: none;
+  }
+
   .controls.compact h2 {
     font-size: 0.86rem;
   }
 
   .controls.compact .controls-right {
     gap: 0.32rem;
+  }
+
+  .controls.compact .search-with-voice {
+    flex: 1 1 58%;
+    width: auto;
+    min-width: 170px;
+  }
+
+  .controls.compact .controls-right select {
+    flex: 0 1 118px;
+    width: 118px;
+    min-width: 104px;
   }
 
   .controls.compact #productSearch,
@@ -3187,30 +3342,42 @@ select:disabled {
   }
 
   .controls.compact .voice-search-btn {
-    width: 30px;
-    min-width: 30px;
-    height: 30px;
-    right: 0.32rem;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    right: 0.28rem;
+  }
+
+  .controls.compact .voice-search-btn svg {
+    width: 12px;
+    height: 12px;
   }
 
   .freshness-control {
     width: 100%;
     min-width: 0;
-    min-height: 50px;
-    grid-template-columns: 52px minmax(0, 1fr);
+    min-height: 82px;
+    grid-template-columns: 66px minmax(0, 1fr);
+    padding: 0.5rem 0.68rem;
   }
 
   .freshness-control img {
-    width: 52px;
-    height: 52px;
+    width: 66px;
+    height: 66px;
   }
 
   .freshness-control strong {
-    font-size: 0.78rem;
+    font-size: 0.88rem;
   }
 
   main {
     padding-bottom: 6.4rem;
+  }
+
+  .brand-footer {
+    margin-top: 1rem;
+    padding-bottom: 5.8rem;
+    align-items: flex-start;
   }
 
   .account-menu {
@@ -3241,6 +3408,22 @@ select:disabled {
     min-width: 122px;
     padding-left: 0.72rem;
     padding-right: 0.72rem;
+  }
+
+  .brand-footer {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 0.6rem;
+  }
+
+  .brand-footer img {
+    width: 40px;
+    height: 40px;
+  }
+
+  .brand-footer small {
+    grid-column: 2;
+    margin-left: 0;
   }
 
   .order-actions {
@@ -3522,7 +3705,19 @@ select:disabled {
   }
 
   .freshness-modal {
-    padding: 0.88rem;
+    width: min(94vw, 420px);
+    max-height: 82vh;
+    padding: 0.82rem;
+  }
+
+  .freshness-modal h3 {
+    font-size: 1.05rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .freshness-grid {
+    gap: 0.55rem;
+    margin-top: 0.65rem;
   }
 
   .freshness-actions .btn-primary,
@@ -3534,7 +3729,29 @@ select:disabled {
   .freshness-camera-panel,
   .freshness-video,
   .freshness-result-panel {
-    min-height: 220px;
+    min-height: 150px;
+  }
+
+  .freshness-result-panel {
+    padding: 0.75rem;
+  }
+
+  .freshness-score {
+    font-size: 2rem;
+  }
+
+  .freshness-result-panel h4 {
+    font-size: 1.05rem;
+  }
+
+  .freshness-actions {
+    gap: 0.45rem;
+    margin-top: 0.65rem;
+  }
+
+  .freshness-control-wrap {
+    min-height: 108px;
+    padding: 0;
   }
 
   .promo-showcase {
