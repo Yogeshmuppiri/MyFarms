@@ -1225,6 +1225,7 @@ main > * {
 }
 
 #productSearch {
+  box-sizing: border-box;
   min-width: 0;
   width: 100%;
   padding-right: 3rem;
@@ -1234,6 +1235,7 @@ main > * {
 }
 
 .voice-search-btn {
+  box-sizing: border-box;
   position: absolute;
   top: 50%;
   right: 0.38rem;
@@ -3146,20 +3148,31 @@ select:disabled {
   .controls-right {
     width: 100%;
     padding-right: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(128px, 160px);
+    gap: 0.55rem;
   }
 
   .controls-right > * {
     min-width: 0;
+    max-width: 100%;
   }
 
   .search-with-voice {
-    flex: 1 1 100%;
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
   }
 
   .controls-right select {
-    flex: 1 1 150px;
-    width: auto;
+    width: 100%;
     min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .controls-right > .btn-tag {
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .freshness-control {
@@ -3174,6 +3187,7 @@ select:disabled {
   }
 
   .filter-wrap {
+    grid-column: 1 / -1;
     flex-wrap: nowrap;
     overflow-x: auto;
     width: 100%;
@@ -3295,7 +3309,7 @@ select:disabled {
     border-radius: 16px;
     width: 100%;
     max-width: 100%;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .controls h2 {
@@ -3318,18 +3332,17 @@ select:disabled {
 
   .controls.compact .controls-right {
     gap: 0.32rem;
+    grid-template-columns: minmax(0, 1fr) minmax(104px, 118px);
   }
 
   .controls.compact .search-with-voice {
-    flex: 1 1 58%;
     width: auto;
-    min-width: 170px;
+    min-width: 0;
   }
 
   .controls.compact .controls-right select {
-    flex: 0 1 118px;
-    width: 118px;
-    min-width: 104px;
+    width: 100%;
+    min-width: 0;
   }
 
   .controls.compact #productSearch,
@@ -3750,7 +3763,7 @@ select:disabled {
   }
 
   .freshness-control-wrap {
-    min-height: 108px;
+    min-height: 82px;
     padding: 0;
   }
 
