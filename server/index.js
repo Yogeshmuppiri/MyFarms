@@ -54,7 +54,7 @@ if (hasCloudinaryConfig) {
   });
 }
 
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "myfarms_dev_secret",
@@ -266,6 +266,120 @@ function isValidMobileNumber(mobileNumber) {
   return /^\d{10}$/.test(String(mobileNumber).trim());
 }
 
+function normalizeFreshnessPrediction(prediction) {
+  const className = String(prediction?.class || prediction?.class_name || prediction?.label || "").toLowerCase();
+  const confidence = Math.max(0, Math.min(1, Number(prediction?.confidence || prediction?.score || 0)));
+
+  let condition = "unknown";
+  if (className.includes("rotten") || className.includes("spoiled") || className.includes("bad")) {
+    condition = "rotten";
+  } else if (className.includes("fresh") || className.includes("ripe") || className.includes("good")) {
+    condition = "fresh";
+  }
+
+  return {
+    className: String(prediction?.class || prediction?.class_name || prediction?.label || "Produce"),
+    condition,
+    confidence
+  };
+}
+
+function hasProduceKeyword(className) {
+  const normalized = String(className || "").toLowerCase();
+  const produceKeywords = [
+    "apple",
+    "banana",
+    "orange",
+    "mango",
+    "tomato",
+    "potato",
+    "onion",
+    "carrot",
+    "cucumber",
+    "pepper",
+    "chilli",
+    "chili",
+    "brinjal",
+    "eggplant",
+    "cabbage",
+    "cauliflower",
+    "beet",
+    "beetroot",
+    "papaya",
+    "pear",
+    "watermelon",
+    "grape",
+    "lemon",
+    "lime",
+    "fruit",
+    "vegetable"
+  ];
+  return produceKeywords.some((keyword) => normalized.includes(keyword));
+}
+
+function summarizeFreshnessPredictions(predictions) {
+  const normalized = (predictions || [])
+    .map(normalizeFreshnessPrediction)
+    .filter((p) => p.condition !== "unknown" && p.confidence > 0);
+
+  if (!normalized.length) {
+    return {
+      label: "Could not confirm freshness",
+      advice: "Try again with one fruit or vegetable centered in good light",
+      score: 0,
+      confidence: 0,
+      source: "roboflow",
+      detectedClass: null,
+      predictions: []
+    };
+  }
+
+  normalized.sort((a, b) => b.confidence - a.confidence);
+  const top = normalized[0];
+  const hasProduceClass = hasProduceKeyword(top.className);
+  const minConfidence = hasProduceClass ? 0.72 : 0.92;
+
+  if (top.confidence < minConfidence) {
+    return {
+      label: "Could not confirm freshness",
+      advice: "Try again with one fruit or vegetable centered in good light",
+      score: 0,
+      confidence: Math.round(top.confidence * 100),
+      source: "roboflow",
+      detectedClass: top.className,
+      predictions: normalized.slice(0, 5)
+    };
+  }
+
+  const confidencePercent = Math.round(top.confidence * 100);
+  const score = top.condition === "fresh"
+    ? Math.max(68, Math.min(98, confidencePercent))
+    : Math.max(8, Math.min(48, 100 - confidencePercent));
+
+  let label = "Looks fresh";
+  let advice = "Good for today";
+  if (top.condition === "rotten") {
+    label = "May be overripe";
+    advice = "Do not use unless you inspect it carefully";
+  } else if (confidencePercent < 72) {
+    label = "Use within 1-2 days";
+    advice = "The item appears usable, but freshness confidence is moderate";
+  } else if (confidencePercent < 86) {
+    label = "Good for today";
+    advice = "Best used soon for top taste";
+  }
+
+  return {
+    label,
+    advice,
+    score,
+    confidence: confidencePercent,
+    source: "roboflow",
+    detectedClass: top.className,
+    predictions: normalized.slice(0, 5)
+  };
+}
+
 function normalizeProductDescription(value) {
   return String(value || "").trim();
 }
@@ -342,6 +456,45 @@ app.get("/api/resources/images", (_req, res) => {
     .map((entry) => entry.name);
 
   res.json({ files });
+});
+
+app.post("/api/freshness/check", async (req, res) => {
+  try {
+    const apiKey = String(process.env.ROBOFLOW_API_KEY || "").trim();
+    const modelId = String(process.env.ROBOFLOW_FRESHNESS_MODEL || "fruits-fresh-and-rotten-rkl2w/1").trim();
+    const apiBaseUrl = String(process.env.ROBOFLOW_API_URL || "https://serverless.roboflow.com").replace(/\/+$/, "");
+    const image = String(req.body.image || "").trim();
+
+    if (!apiKey) {
+      return res.status(503).json({ error: "Freshness model is not configured" });
+    }
+    if (!image || !image.startsWith("data:image/")) {
+      return res.status(400).json({ error: "Image data is required" });
+    }
+
+    const endpoint = `${apiBaseUrl}/${modelId}?api_key=${encodeURIComponent(apiKey)}`;
+    const response = await withTimeout(
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: image
+      }),
+      15000,
+      "Roboflow freshness check"
+    );
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error("Roboflow freshness error:", data);
+      return res.status(502).json({ error: "Freshness model request failed" });
+    }
+
+    const result = summarizeFreshnessPredictions(data.predictions || []);
+    res.json({ result, rawModel: { image: data.image || null } });
+  } catch (err) {
+    console.error("Freshness check failed:", err && err.message ? err.message : err);
+    res.status(500).json({ error: "Unable to check freshness right now" });
+  }
 });
 
 app.post("/api/auth/signup", async (req, res) => {

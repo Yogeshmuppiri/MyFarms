@@ -153,6 +153,7 @@ export default function App() {
   const [showForgot, setShowForgot] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
+  const [showFreshnessChecker, setShowFreshnessChecker] = useState(false);
   const [showMainMenu, setShowMainMenu] = useState(false);
   const [showMenuOrders, setShowMenuOrders] = useState(false);
   const [accountPanel, setAccountPanel] = useState(null);
@@ -169,9 +170,15 @@ export default function App() {
   const [isProfileSubmitting, setIsProfileSubmitting] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isComplaintSubmitting, setIsComplaintSubmitting] = useState(false);
+  const [freshnessCameraOn, setFreshnessCameraOn] = useState(false);
+  const [isFreshnessAnalyzing, setIsFreshnessAnalyzing] = useState(false);
+  const [freshnessResult, setFreshnessResult] = useState(null);
   const lastActivityRef = useRef(Date.now());
   const voiceRecognitionRef = useRef(null);
   const productsSectionRef = useRef(null);
+  const freshnessVideoRef = useRef(null);
+  const freshnessCanvasRef = useRef(null);
+  const freshnessStreamRef = useRef(null);
 
   const [previewProduct, setPreviewProduct] = useState(null);
   const [previewVariantName, setPreviewVariantName] = useState("");
@@ -277,6 +284,183 @@ export default function App() {
   function showToast(message) {
     setToast(message);
     setTimeout(() => setToast(""), 2600);
+  }
+
+  function evaluateFreshnessFromCanvas(canvas) {
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+
+    const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let darkPixels = 0;
+    let brownPixels = 0;
+    let vividPixels = 0;
+    let warmFreshPixels = 0;
+    let greenFreshPixels = 0;
+    let usablePixels = 0;
+    let brightnessSum = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const alpha = data[i + 3];
+      if (alpha < 80) continue;
+
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const brightness = (r + g + b) / 3;
+      const saturation = max ? (max - min) / max : 0;
+      usablePixels += 1;
+      brightnessSum += brightness;
+
+      if (brightness < 58) darkPixels += 1;
+      if (r > 70 && r > g * 0.92 && g > b * 1.15 && brightness < 150) brownPixels += 1;
+      if (saturation > 0.22 && brightness > 65) vividPixels += 1;
+      if (r > 125 && g > 70 && b < 105 && saturation > 0.22) warmFreshPixels += 1;
+      if (g > r * 0.92 && g > b * 1.08 && saturation > 0.18 && brightness > 58) greenFreshPixels += 1;
+    }
+
+    const total = Math.max(1, usablePixels || width * height);
+    const darkRatio = darkPixels / total;
+    const brownRatio = brownPixels / total;
+    const vividRatio = vividPixels / total;
+    const freshColorRatio = (warmFreshPixels + greenFreshPixels) / total;
+    const avgBrightness = brightnessSum / total;
+    const exposurePenalty = avgBrightness < 55 || avgBrightness > 225 ? 16 : 0;
+
+    if (freshColorRatio < 0.04 && vividRatio < 0.16) {
+      return {
+        label: "Could not confirm freshness",
+        advice: "Try again with one fruit or vegetable centered in good light",
+        score: 0,
+        confidence: 0,
+        source: "local",
+        detectedClass: null,
+        details: { darkRatio, brownRatio, vividRatio, avgBrightness }
+      };
+    }
+
+    const score = Math.max(
+      0,
+      Math.min(100, Math.round(72 + freshColorRatio * 32 + vividRatio * 18 - brownRatio * 120 - darkRatio * 58 - exposurePenalty))
+    );
+
+    let label = "Looks fresh";
+    let advice = "Good for today";
+    if (score < 45) {
+      label = "May be overripe";
+      advice = "Use with caution and inspect before eating";
+    } else if (score < 68) {
+      label = "Use within 1-2 days";
+      advice = "It looks usable, but not at peak freshness";
+    } else if (score < 82) {
+      label = "Good for today";
+      advice = "Best used soon for top taste";
+    }
+
+    return {
+      label,
+      advice,
+      score,
+      confidence: Math.max(48, Math.min(94, Math.round(56 + Math.abs(score - 50) * 0.72))),
+      source: "local",
+      detectedClass: null,
+      details: { darkRatio, brownRatio, vividRatio, avgBrightness }
+    };
+  }
+
+  async function checkFreshnessWithModel(imageDataUrl) {
+    const data = await api("/api/freshness/check", {
+      method: "POST",
+      body: JSON.stringify({ image: imageDataUrl })
+    });
+    return data.result;
+  }
+
+  async function analyzeFreshnessImage(source) {
+    const canvas = freshnessCanvasRef.current;
+    if (!canvas || !source) return;
+
+    const sourceWidth = source.videoWidth || source.naturalWidth || source.width;
+    const sourceHeight = source.videoHeight || source.naturalHeight || source.height;
+    if (!sourceWidth || !sourceHeight) {
+      showToast("Image is not ready yet");
+      return;
+    }
+
+    const size = 180;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    const cropSize = Math.min(sourceWidth, sourceHeight);
+    const sx = (sourceWidth - cropSize) / 2;
+    const sy = (sourceHeight - cropSize) / 2;
+    ctx.drawImage(source, sx, sy, cropSize, cropSize, 0, 0, size, size);
+
+    setIsFreshnessAnalyzing(true);
+    try {
+      const imageDataUrl = canvas.toDataURL("image/jpeg", 0.86);
+      const modelResult = await checkFreshnessWithModel(imageDataUrl);
+      setFreshnessResult(modelResult);
+    } catch {
+      setFreshnessResult({
+        label: "Could not confirm freshness",
+        advice: "Freshness model is unavailable. Please try again after API setup is complete.",
+        score: 0,
+        confidence: 0,
+        source: "local",
+        detectedClass: null
+      });
+      showToast("Freshness API is not available");
+    } finally {
+      setIsFreshnessAnalyzing(false);
+    }
+  }
+
+  function stopFreshnessCamera() {
+    if (freshnessStreamRef.current) {
+      freshnessStreamRef.current.getTracks().forEach((track) => track.stop());
+      freshnessStreamRef.current = null;
+    }
+    if (freshnessVideoRef.current) {
+      freshnessVideoRef.current.srcObject = null;
+    }
+    setFreshnessCameraOn(false);
+  }
+
+  async function startFreshnessCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showToast("Camera is not supported in this browser");
+      return;
+    }
+
+    try {
+      stopFreshnessCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      });
+      freshnessStreamRef.current = stream;
+      if (freshnessVideoRef.current) {
+        freshnessVideoRef.current.srcObject = stream;
+        await freshnessVideoRef.current.play();
+      }
+      setFreshnessCameraOn(true);
+      setFreshnessResult(null);
+    } catch {
+      showToast("Unable to open camera");
+    }
+  }
+
+  function handleFreshnessUpload(file) {
+    if (!file) return;
+    const image = new Image();
+    image.onload = () => {
+      analyzeFreshnessImage(image);
+      URL.revokeObjectURL(image.src);
+    };
+    image.onerror = () => showToast("Unable to read this image");
+    image.src = URL.createObjectURL(file);
   }
 
   function openCheckoutFlow() {
@@ -758,6 +942,14 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    if (!showFreshnessChecker) {
+      stopFreshnessCamera();
+    }
+  }, [showFreshnessChecker]);
+
+  useEffect(() => () => stopFreshnessCamera(), []);
+
+  useEffect(() => {
     if (!showMainMenu) return undefined;
     const closeMenuOnScroll = () => setShowMainMenu(false);
     window.addEventListener("scroll", closeMenuOnScroll, { passive: true });
@@ -1132,7 +1324,7 @@ export default function App() {
       <main>
         <section className="showcase-section reveal-on-scroll" aria-label="Featured farm produce carousel">
           <div className="showcase-copy">
-            <p className="kicker">Signature Produce</p>
+            <p className="kicker">Signature Products</p>
             <h3>Handpicked quality, presented with care</h3>
             <p>
               Where honest soil, patient hands, and everyday nourishment come together.
@@ -1143,7 +1335,7 @@ export default function App() {
               <div className="hero-showcase-orbit hero-showcase-orbit-a" />
               <div className="hero-showcase-orbit hero-showcase-orbit-b" />
               <div className="hero-showcase-floor" />
-              <div className="hero-showcase-badge">Signature produce</div>
+              <div className="hero-showcase-badge">Signature products</div>
               <div className="hero-carousel">
                 {heroCarouselItems.map((item) => (
                   <article
@@ -1204,52 +1396,66 @@ export default function App() {
         ) : null}
 
         <section className={`controls ${isFilterCompact ? "compact" : ""}`} id="shopSection">
-          <h2>Shop Products</h2>
-          <div className="controls-right">
-            <div className="search-with-voice">
-              <input
-                id="productSearch"
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={animatedSearchHint}
-              />
-              <button
-                className={`voice-search-btn ${isVoiceListening ? "active" : ""}`}
-                type="button"
-                aria-label={isVoiceListening ? "Stop voice search" : "Start voice search"}
-                title={isVoiceListening ? "Listening..." : "Voice search"}
-                onClick={startVoiceSearch}
-                disabled={!voiceSupported}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 15a3.8 3.8 0 0 0 3.8-3.8V6.8a3.8 3.8 0 1 0-7.6 0v4.4A3.8 3.8 0 0 0 12 15Zm6.2-4a1 1 0 0 0-2 0 4.2 4.2 0 1 1-8.4 0 1 1 0 1 0-2 0A6.2 6.2 0 0 0 11 17.1V20H8.8a1 1 0 1 0 0 2h6.4a1 1 0 1 0 0-2H13v-2.9a6.2 6.2 0 0 0 5.2-6.1Z" />
-                </svg>
-              </button>
-            </div>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              <option value="none">Sort: None</option>
-              <option value="priceAsc">Sort: Price Low to High</option>
-              <option value="priceDesc">Sort: Price High to Low</option>
-              <option value="popularity">Sort: Popularity</option>
-            </select>
-            <button
-              className={`btn-tag ${featuredOnly ? "active" : ""}`}
-              onClick={() => setFeaturedOnly((v) => !v)}
-            >
-              Featured
-            </button>
-            <div className="filter-wrap" id="categoryFilters">
-              {categories.map((c) => (
+          <div className="controls-main">
+            <h2>Shop Products</h2>
+            <div className="controls-right">
+              <div className="search-with-voice">
+                <input
+                  id="productSearch"
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={animatedSearchHint}
+                />
                 <button
-                  key={c}
-                  className={`btn-tag ${selectedCategory === c ? "active" : ""}`}
-                  onClick={() => setSelectedCategory(c)}
+                  className={`voice-search-btn ${isVoiceListening ? "active" : ""}`}
+                  type="button"
+                  aria-label={isVoiceListening ? "Stop voice search" : "Start voice search"}
+                  title={isVoiceListening ? "Listening..." : "Voice search"}
+                  onClick={startVoiceSearch}
+                  disabled={!voiceSupported}
                 >
-                  {c}
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 15a3.8 3.8 0 0 0 3.8-3.8V6.8a3.8 3.8 0 1 0-7.6 0v4.4A3.8 3.8 0 0 0 12 15Zm6.2-4a1 1 0 0 0-2 0 4.2 4.2 0 1 1-8.4 0 1 1 0 1 0-2 0A6.2 6.2 0 0 0 11 17.1V20H8.8a1 1 0 1 0 0 2h6.4a1 1 0 1 0 0-2H13v-2.9a6.2 6.2 0 0 0 5.2-6.1Z" />
+                  </svg>
                 </button>
-              ))}
+              </div>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                <option value="none">Sort: None</option>
+                <option value="priceAsc">Sort: Price Low to High</option>
+                <option value="priceDesc">Sort: Price High to Low</option>
+                <option value="popularity">Sort: Popularity</option>
+              </select>
+              <button
+                className={`btn-tag ${featuredOnly ? "active" : ""}`}
+                onClick={() => setFeaturedOnly((v) => !v)}
+              >
+                Featured
+              </button>
+              <div className="filter-wrap" id="categoryFilters">
+                {categories.map((c) => (
+                  <button
+                    key={c}
+                    className={`btn-tag ${selectedCategory === c ? "active" : ""}`}
+                    onClick={() => setSelectedCategory(c)}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
             </div>
+          </div>
+          <div className="freshness-control-wrap">
+            <button
+              className="freshness-control"
+              type="button"
+              onClick={() => setShowFreshnessChecker(true)}
+              aria-label="Check produce freshness"
+            >
+              <img src="/resources/farmer-mascot-main.png" alt="" aria-hidden="true" />
+              <span>Product</span>
+              <strong>Freshness Lens</strong>
+            </button>
           </div>
         </section>
 
@@ -1371,6 +1577,83 @@ export default function App() {
             aria-hidden="true"
           />
         </>
+      ) : null}
+
+      {showFreshnessChecker ? (
+        <div
+          className="modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowFreshnessChecker(false);
+          }}
+        >
+          <div className="modal-card freshness-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={() => setShowFreshnessChecker(false)}>x</button>
+            <p className="kicker">Freshness Checker</p>
+            <h3>Scan products before you cook</h3>
+            <p className="muted small">
+              Point your camera at one supported fruit or vegetable in good light. Non-food items and unclear images
+              will be rejected instead of rated.
+            </p>
+
+            <div className="freshness-grid">
+              <div className="freshness-camera-panel">
+                <video ref={freshnessVideoRef} className="freshness-video" playsInline muted />
+                {!freshnessCameraOn ? (
+                  <div className="freshness-empty">
+                    <strong>Camera preview</strong>
+                    <span>Use camera or upload an image</span>
+                  </div>
+                ) : null}
+                <canvas ref={freshnessCanvasRef} className="freshness-canvas" aria-hidden="true" />
+              </div>
+
+              <div className="freshness-result-panel">
+                {freshnessResult ? (
+                  <>
+                    <span className="freshness-score">{freshnessResult.score}%</span>
+                    <h4>{freshnessResult.label}</h4>
+                    <p>{freshnessResult.advice}</p>
+                    <div className="freshness-meter">
+                      <span style={{ width: `${freshnessResult.score}%` }} />
+                    </div>
+                    <small>
+                      {freshnessResult.source === "roboflow" ? "Model" : "Local estimate"} confidence: {freshnessResult.confidence}%
+                      {freshnessResult.detectedClass ? ` • Detected: ${freshnessResult.detectedClass}` : ""}
+                    </small>
+                  </>
+                ) : (
+                  <>
+                    <span className="freshness-score muted">--</span>
+                    <h4>Ready to scan</h4>
+                    <p>Place the produce in the center of the frame and avoid harsh shadows.</p>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="freshness-actions">
+              <button className="btn-primary" type="button" onClick={startFreshnessCamera}>
+                {freshnessCameraOn ? "Restart Camera" : "Start Camera"}
+              </button>
+              <button
+                className="btn-ghost"
+                type="button"
+                disabled={!freshnessCameraOn || isFreshnessAnalyzing}
+                onClick={() => analyzeFreshnessImage(freshnessVideoRef.current)}
+              >
+                {isFreshnessAnalyzing ? "Checking..." : "Analyze Frame"}
+              </button>
+              <label className="btn-ghost freshness-upload">
+                Upload Photo
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleFreshnessUpload(e.target.files && e.target.files[0])}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {showWallet && user ? (
