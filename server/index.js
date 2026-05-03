@@ -284,6 +284,27 @@ function normalizeFreshnessPrediction(prediction) {
   };
 }
 
+function getBase64ImagePayload(imageDataUrl) {
+  return String(imageDataUrl || "").replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+}
+
+function getRoboflowPredictions(data) {
+  if (Array.isArray(data?.predictions)) return data.predictions;
+
+  if (data?.predictions && typeof data.predictions === "object") {
+    return Object.entries(data.predictions).map(([className, value]) => ({
+      class: className,
+      confidence: Number(value?.confidence || value || 0)
+    }));
+  }
+
+  if (data?.top) {
+    return [{ class: data.top, confidence: Number(data.confidence || 0) }];
+  }
+
+  return [];
+}
+
 function hasProduceKeyword(className) {
   const normalized = String(className || "").toLowerCase();
   const produceKeywords = [
@@ -445,6 +466,21 @@ async function validatePromoCode({ promoCode, subtotalAmount }) {
   return { promo, discountAmount };
 }
 
+async function callRoboflowModel({ apiBaseUrl, modelId, apiKey, image }) {
+  const endpoint = `${apiBaseUrl}/${modelId}?api_key=${encodeURIComponent(apiKey)}`;
+  const response = await withTimeout(
+    fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: getBase64ImagePayload(image)
+    }),
+    15000,
+    "Roboflow freshness check"
+  );
+  const data = await response.json().catch(() => ({}));
+  return { response, data, endpoint };
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "my-farms" });
 });
@@ -472,24 +508,29 @@ app.post("/api/freshness/check", async (req, res) => {
       return res.status(400).json({ error: "Image data is required" });
     }
 
-    const endpoint = `${apiBaseUrl}/${modelId}?api_key=${encodeURIComponent(apiKey)}`;
-    const response = await withTimeout(
-      fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: image
-      }),
-      15000,
-      "Roboflow freshness check"
-    );
+    let { response, data, endpoint } = await callRoboflowModel({ apiBaseUrl, modelId, apiKey, image });
+    if (!response.ok && !apiBaseUrl.includes("classify.roboflow.com")) {
+      const retry = await callRoboflowModel({
+        apiBaseUrl: "https://classify.roboflow.com",
+        modelId,
+        apiKey,
+        image
+      });
+      response = retry.response;
+      data = retry.data;
+      endpoint = retry.endpoint;
+    }
 
-    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      console.error("Roboflow freshness error:", data);
+      console.error("Roboflow freshness error:", {
+        status: response.status,
+        endpoint: endpoint.replace(apiKey, "***"),
+        data
+      });
       return res.status(502).json({ error: "Freshness model request failed" });
     }
 
-    const result = summarizeFreshnessPredictions(data.predictions || []);
+    const result = summarizeFreshnessPredictions(getRoboflowPredictions(data));
     res.json({ result, rawModel: { image: data.image || null } });
   } catch (err) {
     console.error("Freshness check failed:", err && err.message ? err.message : err);

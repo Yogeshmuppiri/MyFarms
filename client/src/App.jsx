@@ -37,6 +37,161 @@ function normalizeToken(value) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+const VOICE_PRODUCT_STOP_WORDS = new Set([
+  "add",
+  "buy",
+  "get",
+  "put",
+  "remove",
+  "delete",
+  "drop",
+  "take",
+  "out",
+  "from",
+  "place",
+  "please",
+  "to",
+  "into",
+  "in",
+  "cart",
+  "basket",
+  "show",
+  "search",
+  "find",
+  "for",
+  "product",
+  "products",
+  "item",
+  "items",
+  "the",
+  "a",
+  "an",
+  "some",
+  "one",
+  "two",
+  "three",
+  "1",
+  "2",
+  "3",
+  "kg",
+  "kilo",
+  "kilos",
+  "liter",
+  "litre",
+  "liters",
+  "litres",
+  "dozen",
+  "pack",
+  "piece",
+  "pieces",
+  "of",
+  "me",
+  "my"
+]);
+
+const PRODUCT_SPEECH_ALIASES = [
+  { terms: ["milk", "fresh milk"], names: ["Fresh Milk"] },
+  { terms: ["egg", "eggs"], names: ["Eggs"] },
+  { terms: ["chicken"], names: ["Broiler Chicken", "Natu Kodi Chicken"] },
+  { terms: ["broiler", "broiler chicken"], names: ["Broiler Chicken"] },
+  { terms: ["natu kodi", "natukodi", "country chicken"], names: ["Natu Kodi Chicken"] },
+  { terms: ["tomato", "tomatoes"], names: ["Tomatoes"] },
+  { terms: ["curd", "yoghurt", "yogurt"], names: ["Yogurt"] },
+  { terms: ["paneer", "panner"], names: ["Paneer"] },
+  { terms: ["groundnut oil", "oil"], names: ["Organic Groundnut Oil (Bull Driven)"] },
+  { terms: ["bendi", "okra"], names: ["Okra/Bendi"] },
+  { terms: ["brinjal", "eggplant", "long eggplant"], names: ["Brinjal", "Long Egg Plant"] }
+];
+
+function tokenizeSpeechProduct(value) {
+  return String(value || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((part) => part.trim())
+    .filter((part) => part && !VOICE_PRODUCT_STOP_WORDS.has(part));
+}
+
+function getSpeechProductText(value) {
+  return tokenizeSpeechProduct(value).join(" ");
+}
+
+function sanitizePromoCode(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function parseSpokenNumber(value) {
+  const raw = String(value || "").toLowerCase();
+  const digitMatch = raw.match(/\d+/);
+  if (digitMatch) return Number(digitMatch[0]);
+
+  const words = {
+    zero: 0,
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
+    fourteen: 14,
+    fifteen: 15,
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    twenty: 20,
+    thirty: 30,
+    forty: 40,
+    fifty: 50,
+    sixty: 60,
+    seventy: 70,
+    eighty: 80,
+    ninety: 90,
+    hundred: 100
+  };
+
+  let total = 0;
+  let current = 0;
+  for (const part of raw.split(/[^a-z]+/).filter(Boolean)) {
+    if (!(part in words)) continue;
+    const number = words[part];
+    if (number === 100) current = Math.max(1, current) * 100;
+    else current += number;
+  }
+  total += current;
+  return total || null;
+}
+
+function scoreSpeechProductMatch(product, queryTokens, queryToken) {
+  const nameTokens = String(product?.name || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const nameToken = normalizeToken(product?.name);
+  if (!nameToken || !queryToken) return 0;
+
+  let score = 0;
+  if (nameToken === queryToken) score += 120;
+  if (nameToken.includes(queryToken) || queryToken.includes(nameToken)) score += 90;
+
+  for (const token of queryTokens) {
+    const singular = token.endsWith("s") ? token.slice(0, -1) : token;
+    for (const namePart of nameTokens) {
+      const nameSingular = namePart.endsWith("s") ? namePart.slice(0, -1) : namePart;
+      if (namePart === token || nameSingular === singular) score += 40;
+      else if (namePart.startsWith(token) || token.startsWith(namePart)) score += 18;
+    }
+  }
+
+  return score;
+}
+
 function resolveAssetUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -105,10 +260,11 @@ function isDeliveredStatus(status) {
   return normalized.includes("DELIVERED");
 }
 
-const TAX_RATE = 0.05;
-const CUSTOMER_IDLE_MS = 30 * 60 * 1000;
-const LAST_ACTIVITY_KEY = "myfarms_last_activity_at";
-const WALLET_COINS_PER_RUPEE = 50;
+  const TAX_RATE = 0.05;
+  const CUSTOMER_IDLE_MS = 30 * 60 * 1000;
+  const LAST_ACTIVITY_KEY = "myfarms_last_activity_at";
+  const WALLET_COINS_PER_RUPEE = 50;
+  const GESTURE_DWELL_MS = 2600;
 const DEFAULT_SEARCH_HINTS = [
   "Search for milk",
   "Search for eggs",
@@ -140,6 +296,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [isVoiceListening, setIsVoiceListening] = useState(false);
+  const [isVoiceCommandActive, setIsVoiceCommandActive] = useState(false);
   const [animatedSearchHint, setAnimatedSearchHint] = useState(DEFAULT_SEARCH_HINTS[0]);
   const [orders, setOrders] = useState([]);
   const [complaints, setComplaints] = useState([]);
@@ -154,6 +311,7 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [showFreshnessChecker, setShowFreshnessChecker] = useState(false);
+  const [showFarmAssistant, setShowFarmAssistant] = useState(false);
   const [showMainMenu, setShowMainMenu] = useState(false);
   const [showMenuOrders, setShowMenuOrders] = useState(false);
   const [accountPanel, setAccountPanel] = useState(null);
@@ -173,12 +331,44 @@ export default function App() {
   const [freshnessCameraOn, setFreshnessCameraOn] = useState(false);
   const [isFreshnessAnalyzing, setIsFreshnessAnalyzing] = useState(false);
   const [freshnessResult, setFreshnessResult] = useState(null);
+  const [assistantMessage, setAssistantMessage] = useState("Try saying: add milk, show tomatoes, checkout, or show my orders.");
+  const [assistantTranscript, setAssistantTranscript] = useState("");
+  const [gestureCameraOn, setGestureCameraOn] = useState(false);
+  const [isGestureLoading, setIsGestureLoading] = useState(false);
+  const [gestureStatus, setGestureStatus] = useState("Open gesture mode and hold a gesture steady for a moment.");
+  const [gestureDetected, setGestureDetected] = useState({ label: "Idle", confidence: 0, action: "Ready" });
+  const [gestureSelectedProductId, setGestureSelectedProductId] = useState("");
+  const [gestureCursor, setGestureCursor] = useState({ active: false, x: 0, y: 0, progress: 0, label: "" });
+  const [pendingAssistantOrderConfirmation, setPendingAssistantOrderConfirmation] = useState(false);
   const lastActivityRef = useRef(Date.now());
   const voiceRecognitionRef = useRef(null);
+  const voiceShouldListenRef = useRef(false);
+  const voiceRestartTimerRef = useRef(null);
   const productsSectionRef = useRef(null);
+  const cartPanelRef = useRef(null);
+  const cartRef = useRef([]);
+  const checkoutRef = useRef(null);
+  const showCheckoutRef = useRef(false);
+  const isPlacingOrderRef = useRef(false);
+  const pendingAssistantOrderConfirmationRef = useRef(false);
   const freshnessVideoRef = useRef(null);
   const freshnessCanvasRef = useRef(null);
   const freshnessStreamRef = useRef(null);
+  const gestureVideoRef = useRef(null);
+  const gestureStreamRef = useRef(null);
+  const gestureRecognizerRef = useRef(null);
+  const gestureRafRef = useRef(null);
+  const gestureLastActionRef = useRef({ name: "", at: 0 });
+  const gestureStableRef = useRef({ name: "", count: 0, score: 0 });
+  const gestureLastVideoTimeRef = useRef(-1);
+  const gestureSelectedProductIdRef = useRef("");
+  const gestureCursorRef = useRef({ x: 0, y: 0, targetId: "", startedAt: 0, lastUpdateAt: 0, cooldownUntil: 0 });
+  const productsRef = useRef([]);
+  const categoriesRef = useRef([]);
+  const filteredProductsRef = useRef([]);
+  const selectedCategoryRef = useRef("All");
+  const cartItemCountRef = useRef(0);
+  const userRef = useRef(null);
 
   const [previewProduct, setPreviewProduct] = useState(null);
   const [previewVariantName, setPreviewVariantName] = useState("");
@@ -280,10 +470,476 @@ export default function App() {
   const walletCoinsUsedEstimate = walletRedeemEstimate * WALLET_COINS_PER_RUPEE;
   const checkoutTotal = Math.max(0, checkoutTotalBeforeWallet - walletRedeemEstimate);
   const coinsEarnEstimate = Math.floor(Math.max(0, taxableAmount - walletRedeemEstimate) / WALLET_COINS_PER_RUPEE);
+  const farmAssistantActive = isVoiceCommandActive || isVoiceListening || gestureCameraOn || isGestureLoading;
+
+  useEffect(() => {
+    productsRef.current = products;
+    categoriesRef.current = categories;
+    filteredProductsRef.current = filteredProducts;
+    selectedCategoryRef.current = selectedCategory;
+    cartItemCountRef.current = cartItemCount;
+    userRef.current = user;
+    cartRef.current = cart;
+    checkoutRef.current = checkout;
+    showCheckoutRef.current = showCheckout;
+    isPlacingOrderRef.current = isPlacingOrder;
+    pendingAssistantOrderConfirmationRef.current = pendingAssistantOrderConfirmation;
+  }, [products, categories, filteredProducts, selectedCategory, cartItemCount, user, cart, checkout, showCheckout, isPlacingOrder, pendingAssistantOrderConfirmation]);
+
+  useEffect(() => {
+    if (
+      gestureSelectedProductId &&
+      !filteredProducts.some((product) => String(product.id) === String(gestureSelectedProductId) && !product.outOfStock)
+    ) {
+      gestureSelectedProductIdRef.current = "";
+      setGestureSelectedProductId("");
+    }
+  }, [filteredProducts, gestureSelectedProductId]);
 
   function showToast(message) {
     setToast(message);
     setTimeout(() => setToast(""), 2600);
+  }
+
+  function findProductBySpeech(text) {
+    const queryText = getSpeechProductText(text);
+    const queryTokens = tokenizeSpeechProduct(text);
+    const queryToken = normalizeToken(queryText || text);
+    if (!queryToken) return null;
+
+    for (const alias of PRODUCT_SPEECH_ALIASES) {
+      const matchedAlias = alias.terms.some((term) => {
+        const termToken = normalizeToken(term);
+        return queryToken === termToken || queryToken.includes(termToken) || termToken.includes(queryToken);
+      });
+      if (!matchedAlias) continue;
+
+      const product = alias.names
+        .map((name) => productsRef.current.find((p) => normalizeToken(p.name) === normalizeToken(name)))
+        .find(Boolean);
+      if (product) return product;
+    }
+
+    let bestProduct = null;
+    let bestScore = 0;
+    for (const product of productsRef.current) {
+      const score = scoreSpeechProductMatch(product, queryTokens, queryToken);
+      if (score > bestScore) {
+        bestProduct = product;
+        bestScore = score;
+      }
+    }
+
+    return bestScore >= 40 ? bestProduct : null;
+  }
+
+  function findCartItemBySpeech(text) {
+    const queryText = getSpeechProductText(text);
+    const queryTokens = tokenizeSpeechProduct(text);
+    const queryToken = normalizeToken(queryText || text);
+    if (!queryToken) return null;
+
+    const matchedProduct = findProductBySpeech(text);
+    const matchedProductToken = normalizeToken(matchedProduct?.name);
+    let bestItem = null;
+    let bestScore = 0;
+
+    for (const item of cartRef.current || []) {
+      const itemProduct = matchedProductToken && normalizeToken(item.name) === matchedProductToken ? { name: item.name } : item;
+      const score = matchedProductToken && normalizeToken(item.name) === matchedProductToken
+        ? 120
+        : scoreSpeechProductMatch(itemProduct, queryTokens, queryToken);
+      if (score > bestScore) {
+        bestItem = item;
+        bestScore = score;
+      }
+    }
+
+    return bestScore >= 40 ? bestItem : null;
+  }
+
+  function removeCartItemBySpeech(text) {
+    const item = findCartItemBySpeech(text);
+    if (!item) {
+      const productText = getSpeechProductText(text) || text;
+      setAssistantMessage(`I could not find ${productText} in cart`);
+      showToast(`Not in cart: ${productText}`);
+      return true;
+    }
+
+    setCart((current) =>
+      current
+        .map((cartItem) => (cartItem.key === item.key ? { ...cartItem, quantity: cartItem.quantity - 1 } : cartItem))
+        .filter((cartItem) => cartItem.quantity > 0)
+    );
+    setAssistantMessage(`Removed ${item.name} from cart`);
+    showToast(`Removed ${item.name}`);
+    return true;
+  }
+
+  function cycleCategory() {
+    const currentCategories = categoriesRef.current;
+    if (!currentCategories.length) return;
+    const currentIndex = currentCategories.indexOf(selectedCategoryRef.current);
+    const nextCategory = currentCategories[(currentIndex + 1) % currentCategories.length] || "All";
+    setSelectedCategory(nextCategory);
+    setAssistantMessage(`Showing ${nextCategory}`);
+    showToast(`Showing ${nextCategory}`);
+  }
+
+  function scrollPageByDirection(direction) {
+    const amount = Math.max(360, Math.floor(window.innerHeight * 0.72));
+    window.scrollBy({ top: direction === "up" ? -amount : amount, behavior: "smooth" });
+    setAssistantMessage(direction === "up" ? "Scrolling up" : "Scrolling down");
+  }
+
+  async function openOrdersByVoice({ statusOnly = false } = {}) {
+    if (!userRef.current) {
+      setShowAuth(true);
+      setAssistantMessage("Please login to view orders");
+      return true;
+    }
+
+    openAccountPanel("orders");
+    const latestOrders = await loadOrders();
+    const latestOrder = (latestOrders || orders).find(Boolean);
+
+    if (statusOnly && latestOrder) {
+      const orderCode = latestOrder.id ? `#${latestOrder.id.slice(-6).toUpperCase()}` : "";
+      const message = `Latest order ${orderCode} is ${statusLabel(latestOrder.status)}`;
+      setAssistantMessage(message);
+      showToast(message);
+      return true;
+    }
+
+    if (statusOnly) {
+      setAssistantMessage("No orders found yet");
+      showToast("No orders found yet");
+      return true;
+    }
+
+    setAssistantMessage("Opening your orders");
+    return true;
+  }
+
+  async function openDashboardByVoice() {
+    if (!userRef.current) {
+      setShowAuth(true);
+      setAssistantMessage("Please login to open My Farms Dashboard");
+      return true;
+    }
+
+    setShowMainMenu(true);
+    setShowMenuOrders(false);
+    const [latestOrders, latestComplaints, latestWallet] = await Promise.all([
+      loadOrders(),
+      loadComplaints(),
+      loadWallet()
+    ]);
+    const coins = Number(latestWallet?.balance ?? walletBalance);
+    const message = `Dashboard ready: ${Math.max(0, Math.floor(coins))} wallet coins, ${latestOrders.length} orders, ${latestComplaints.length} complaints`;
+    setAssistantMessage(message);
+    showToast("My Farms Dashboard opened");
+    return true;
+  }
+
+  async function openWalletByVoice() {
+    if (!userRef.current) {
+      setShowAuth(true);
+      setAssistantMessage("Please login to view wallet coins");
+      return true;
+    }
+
+    setShowMainMenu(false);
+    setShowWallet(true);
+    const latestWallet = await loadWallet();
+    const coins = Math.max(0, Math.floor(Number(latestWallet?.balance ?? walletBalance)));
+    setAssistantMessage(`You have ${coins} wallet coins`);
+    return true;
+  }
+
+  async function confirmAssistantOrderPlacement() {
+    pendingAssistantOrderConfirmationRef.current = false;
+    setPendingAssistantOrderConfirmation(false);
+    setAssistantMessage("Placing your order");
+    await placeOrder();
+    return true;
+  }
+
+  function cancelAssistantOrderPlacement() {
+    pendingAssistantOrderConfirmationRef.current = false;
+    setPendingAssistantOrderConfirmation(false);
+    setAssistantMessage("Order placement canceled");
+    showToast("Order placement canceled");
+    return true;
+  }
+
+  function openProfileByVoice() {
+    if (!userRef.current) {
+      setShowAuth(true);
+      setAssistantMessage("Please login to edit profile");
+      return true;
+    }
+
+    setShowMainMenu(false);
+    setShowProfile(true);
+    setAssistantMessage("Opening your profile");
+    return true;
+  }
+
+  function fillCheckoutByVoice(normalized, phrase) {
+    if (!showCheckoutRef.current) return false;
+
+    if (/\b(wallet|coins?)\b/.test(normalized)) {
+      if (/\b(remove|disable|off|don't|dont|no|stop|uncheck)\b/.test(normalized)) {
+        setCheckout((current) => ({ ...current, useWalletCoins: false }));
+        setAssistantMessage("Wallet coins removed from checkout");
+        showToast("Wallet coins removed");
+        return true;
+      }
+      if (/\b(use|apply|add|enable|on|check)\b/.test(normalized)) {
+        if (!walletBalance) {
+          setAssistantMessage("No wallet coins available to use");
+          showToast("No wallet coins available");
+          return true;
+        }
+        setCheckout((current) => ({ ...current, useWalletCoins: true }));
+        setAssistantMessage("Wallet coins applied to checkout");
+        showToast("Wallet coins applied");
+        return true;
+      }
+    }
+
+    if (/\b(address|delivery address)\b/.test(normalized)) {
+      const address = phrase
+        .replace(/\b(set|add|use|my|delivery|address|is|as|to|please)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!address) {
+        setAssistantMessage("Please say the delivery address after the word address");
+        return true;
+      }
+      setCheckout((current) => ({ ...current, paymentMethod: current.paymentMethod === "PICKUP" ? "COD" : current.paymentMethod, address }));
+      setAssistantMessage("Delivery address added");
+      showToast("Delivery address added");
+      return true;
+    }
+
+    if (/\b(tip|delivery tip)\b/.test(normalized)) {
+      const amount = parseSpokenNumber(phrase);
+      if (amount === null || amount < 0 || amount > 5000) {
+        setAssistantMessage("Tip should be between 0 and 5000");
+        showToast("Tip should be between 0 and 5000");
+        return true;
+      }
+      setCheckout((current) => ({ ...current, tipAmount: String(amount) }));
+      setAssistantMessage(`Tip set to Rs.${amount}`);
+      showToast(`Tip set to Rs.${amount}`);
+      return true;
+    }
+
+    if (/\b(promo|coupon|code)\b/.test(normalized)) {
+      const rawCode = phrase
+        .replace(/\b(set|add|apply|use|my|promo|coupon|code|is|as|to|please)\b/gi, " ")
+        .replace(/\s+/g, "")
+        .trim();
+      const promoCode = sanitizePromoCode(rawCode);
+      if (!promoCode) {
+        setAssistantMessage("Please say the promo code after promo code");
+        return true;
+      }
+      setCheckout((current) => ({ ...current, promoCode }));
+      setAssistantMessage(`Promo code set to ${promoCode}`);
+      showToast(`Promo code set to ${promoCode}`);
+      return true;
+    }
+
+    if (/\b(payment|pay|pickup|delivery|cash)\b/.test(normalized)) {
+      if (/\b(pickup|store pickup|collect)\b/.test(normalized)) {
+        setCheckout((current) => ({ ...current, paymentMethod: "PICKUP" }));
+        setAssistantMessage("Payment method set to Store Pickup");
+        showToast("Payment method set to Store Pickup");
+        return true;
+      }
+      if (/\b(cash|cod|cash on delivery|delivery)\b/.test(normalized)) {
+        setCheckout((current) => ({ ...current, paymentMethod: "COD" }));
+        setAssistantMessage("Payment method set to Cash On Delivery");
+        showToast("Payment method set to Cash On Delivery");
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  async function runShoppingCommand(transcript) {
+    const phrase = String(transcript || "").trim();
+    const normalized = phrase.toLowerCase();
+    if (!phrase) return false;
+
+    setAssistantTranscript(phrase);
+    const wantsAdd = /\b(add|buy|get|put)\b/i.test(normalized);
+    const wantsRemove = /\b(remove|delete|take out|drop)\b/i.test(normalized);
+    const wantsCheckout = /\b(checkout|check\s+out)\b/.test(normalized);
+    const wantsPlaceOrder = /\b(place|submit|confirm)\b.*\b(order|purchase)\b/.test(normalized);
+
+    if (pendingAssistantOrderConfirmationRef.current) {
+      if (/^\s*(yes|yeah|yep|ok|okay|sure)\s*$/i.test(phrase) || /\b(yes place|yes submit|yes confirm)\b/.test(normalized)) {
+        return confirmAssistantOrderPlacement();
+      }
+      if (/\b(no|cancel|stop|wait)\b/.test(normalized)) {
+        return cancelAssistantOrderPlacement();
+      }
+      setAssistantMessage("Say yes to place order, or no to cancel");
+      return true;
+    }
+
+    if (wantsCheckout) {
+      setAssistantMessage("Opening checkout");
+      openCheckoutFlow();
+      return true;
+    }
+
+    if ((showCheckoutRef.current || showCheckout) && wantsPlaceOrder) {
+      pendingAssistantOrderConfirmationRef.current = true;
+      setPendingAssistantOrderConfirmation(true);
+      setAssistantMessage("Say yes to place order, or no to cancel");
+      showToast("Confirm by saying yes or no");
+      return true;
+    }
+
+    if (fillCheckoutByVoice(normalized, phrase)) {
+      return true;
+    }
+
+    if (/\b(scroll|go|move)\b/.test(normalized) && /\bdown|below|next\b/.test(normalized)) {
+      scrollPageByDirection("down");
+      return true;
+    }
+
+    if (/\b(scroll|go|move)\b/.test(normalized) && /\bup|above|back\b/.test(normalized)) {
+      scrollPageByDirection("up");
+      return true;
+    }
+
+    if (/\b(top|home)\b/.test(normalized) && /\b(go|scroll|move|back)\b/.test(normalized)) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setAssistantMessage("Going to top");
+      return true;
+    }
+
+    if (/\b(products?|shop)\b/.test(normalized) && /\b(go|scroll|show|open)\b/.test(normalized)) {
+      productsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setAssistantMessage("Showing products");
+      return true;
+    }
+
+    if (/\bcart\b/.test(normalized) && /\b(go|scroll|show|open)\b/.test(normalized) && !wantsAdd) {
+      cartPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setAssistantMessage("Showing cart");
+      return true;
+    }
+
+    if (normalized.includes("cart") && !wantsAdd) {
+      const count = cartItemCountRef.current;
+      setAssistantMessage(`${count} item${count === 1 ? "" : "s"} in cart`);
+      showToast(`${count} item${count === 1 ? "" : "s"} in cart`);
+      return true;
+    }
+
+    if (/\borders?\b/.test(normalized) && !wantsAdd) {
+      const statusOnly = /\b(track|status|latest|last)\b/.test(normalized);
+      return openOrdersByVoice({ statusOnly });
+    }
+
+    if (/\b(dashboard|my farms dashboard|myfarms dashboard|account dashboard)\b/.test(normalized) && !wantsAdd) {
+      return openDashboardByVoice();
+    }
+
+    if (/\b(wallet|coins?)\b/.test(normalized) && !wantsAdd) {
+      return openWalletByVoice();
+    }
+
+    if (/\b(profile|account)\b/.test(normalized) && /\b(open|show|view|edit|my)\b/.test(normalized) && !wantsAdd) {
+      return openProfileByVoice();
+    }
+
+    if (/\b(complaints?|tickets?)\b/.test(normalized) && !wantsAdd) {
+      if (!userRef.current) {
+        setShowAuth(true);
+        setAssistantMessage("Please login to view complaints");
+      } else {
+        openAccountPanel("complaints");
+        setAssistantMessage("Opening your complaints");
+      }
+      return true;
+    }
+
+    if (/\b(report|issue|problem)\b/.test(normalized) && /\border\b/.test(normalized) && !wantsAdd) {
+      if (!userRef.current) {
+        setShowAuth(true);
+        setAssistantMessage("Please login to report an order issue");
+      } else {
+        openComplaintFlow();
+        setAssistantMessage("Opening order issue form");
+      }
+      return true;
+    }
+
+    const asksAboutMyFarms =
+      /\babout\s+(us|my\s*farms?|myfarms)\b/.test(normalized) ||
+      /\b(open|show|view|go to|tell me about|what is)\b.*\b(my\s*farms?|myfarms)\b/.test(normalized) ||
+      /\b(my\s*farms?|myfarms)\b.*\b(about|info|information)\b/.test(normalized);
+    if (asksAboutMyFarms && !wantsAdd) {
+      setAssistantMessage("Opening About Us");
+      window.location.assign("/about.html");
+      return true;
+    }
+
+    if (normalized.includes("next category") || normalized.includes("change category")) {
+      cycleCategory();
+      return true;
+    }
+
+    const category = categoriesRef.current.find((c) => c !== "All" && normalized.includes(c.toLowerCase()));
+    if (category && (normalized.includes("show") || normalized.includes("category") || normalized.includes("open"))) {
+      setSelectedCategory(category);
+      setAssistantMessage(`Showing ${category}`);
+      productsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return true;
+    }
+
+    const product = findProductBySpeech(phrase);
+    if (product && wantsAdd) {
+      addProductDirectly(product);
+      setAssistantMessage(`Added ${product.name} to cart`);
+      return true;
+    }
+
+    if (wantsRemove) {
+      return removeCartItemBySpeech(phrase);
+    }
+
+    if (wantsAdd) {
+      const productText = getSpeechProductText(phrase) || phrase;
+      setSearchQuery(productText);
+      setSelectedCategory("All");
+      productsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setAssistantMessage(`I could not find ${productText}. Showing close matches.`);
+      showToast(`Showing matches for ${productText}`);
+      return true;
+    }
+
+    const cleanedSearch = phrase
+      .replace(/\b(show|search|find|for|products?|product|items?|item)\b/gi, "")
+      .trim();
+    const query = cleanedSearch || phrase;
+    setSearchQuery(query);
+    setSelectedCategory("All");
+    productsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setAssistantMessage(`Searching for ${query}`);
+    showToast(`Searching: ${query}`);
+    return true;
   }
 
   function evaluateFreshnessFromCanvas(canvas) {
@@ -463,17 +1119,493 @@ export default function App() {
     image.src = URL.createObjectURL(file);
   }
 
+  async function loadGestureRecognizer() {
+    if (gestureRecognizerRef.current) return gestureRecognizerRef.current;
+    const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18");
+    const filesetResolver = await vision.FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm"
+    );
+    const options = {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task"
+      },
+      runningMode: "VIDEO",
+      numHands: 1,
+      minHandDetectionConfidence: 0.55,
+      minHandPresenceConfidence: 0.55,
+      minTrackingConfidence: 0.55
+    };
+
+    let recognizer;
+    try {
+      recognizer = await vision.GestureRecognizer.createFromOptions(filesetResolver, {
+        ...options,
+        baseOptions: { ...options.baseOptions, delegate: "GPU" }
+      });
+    } catch {
+      recognizer = await vision.GestureRecognizer.createFromOptions(filesetResolver, {
+        ...options,
+        baseOptions: { ...options.baseOptions, delegate: "CPU" }
+      });
+    }
+    gestureRecognizerRef.current = recognizer;
+    return recognizer;
+  }
+
+  function stopGestureCamera() {
+    if (gestureRafRef.current) {
+      cancelAnimationFrame(gestureRafRef.current);
+      gestureRafRef.current = null;
+    }
+    if (gestureStreamRef.current) {
+      gestureStreamRef.current.getTracks().forEach((track) => track.stop());
+      gestureStreamRef.current = null;
+    }
+    if (gestureVideoRef.current) {
+      gestureVideoRef.current.srcObject = null;
+    }
+    gestureStableRef.current = { name: "", count: 0, score: 0 };
+    gestureLastVideoTimeRef.current = -1;
+    gestureCursorRef.current = { x: 0, y: 0, targetId: "", startedAt: 0, lastUpdateAt: 0, cooldownUntil: 0 };
+    setGestureCursor({ active: false, x: 0, y: 0, progress: 0, label: "" });
+    setGestureCameraOn(false);
+  }
+
+  function getGestureCommand(gestureName) {
+    const commands = {
+      Thumb_Up: {
+        label: "Thumbs Up",
+        action: "Add selected product"
+      },
+      Thumb_Down: {
+        label: "Thumbs Down",
+        action: "Remove the latest cart item"
+      },
+      Pointing_Up: {
+        label: "Pointing Up",
+        action: "Select next visible product"
+      },
+      Open_Palm: {
+        label: "Open Palm",
+        action: "Scroll down"
+      },
+      Closed_Fist: {
+        label: "Closed Fist",
+        action: "Scroll up"
+      },
+      Victory: {
+        label: "Victory",
+        action: "Open checkout"
+      },
+      ILoveYou: {
+        label: "I Love You",
+        action: "Open orders"
+      }
+    };
+
+    return commands[gestureName] || {
+      label: String(gestureName || "Unknown").replace(/_/g, " "),
+      action: "Hold a supported gesture"
+    };
+  }
+
+  function getGestureTargetProduct() {
+    if (previewProduct && !previewProduct.outOfStock) return previewProduct;
+
+    const selectedId = gestureSelectedProductIdRef.current || gestureSelectedProductId;
+    if (selectedId) {
+      const selectedProduct = productsRef.current.find((product) => String(product.id) === String(selectedId) && !product.outOfStock);
+      if (selectedProduct) return selectedProduct;
+    }
+
+    const cards = Array.from(document.querySelectorAll("[data-gesture-product-id]"));
+    if (!cards.length) return null;
+
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const focusX = viewportWidth / 2;
+    const focusY = viewportHeight * 0.48;
+
+    let best = null;
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect();
+      const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+      const visibleArea = visibleWidth * visibleHeight;
+      const cardArea = Math.max(1, rect.width * rect.height);
+      const visibleRatio = visibleArea / cardArea;
+
+      if (visibleRatio < 0.45) continue;
+
+      const cardX = rect.left + rect.width / 2;
+      const cardY = rect.top + rect.height / 2;
+      const distance = Math.hypot(cardX - focusX, cardY - focusY);
+      const centerBonus = rect.top <= focusY && rect.bottom >= focusY ? 160 : 0;
+      const score = distance - centerBonus - visibleRatio * 90;
+
+      if (!best || score < best.score) {
+        best = {
+          score,
+          productId: card.getAttribute("data-gesture-product-id")
+        };
+      }
+    }
+
+    if (!best?.productId) return null;
+    return productsRef.current.find((product) => String(product.id) === String(best.productId) && !product.outOfStock) || null;
+  }
+
+  function getVisibleGestureProducts() {
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    return Array.from(document.querySelectorAll("[data-gesture-product-id]"))
+      .map((card) => {
+        const rect = card.getBoundingClientRect();
+        const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+        const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+        const visibleRatio = (visibleWidth * visibleHeight) / Math.max(1, rect.width * rect.height);
+        return {
+          id: card.getAttribute("data-gesture-product-id"),
+          rect,
+          visibleRatio
+        };
+      })
+      .filter((item) => item.id && item.visibleRatio >= 0.35)
+      .sort((a, b) => (a.rect.top - b.rect.top) || (a.rect.left - b.rect.left));
+  }
+
+  function selectGestureProduct(direction = 1) {
+    const visibleProducts = getVisibleGestureProducts();
+    if (!visibleProducts.length) {
+      setGestureStatus("No visible product cards. Scroll to products, then point up to select.");
+      return null;
+    }
+
+    const selectedId = gestureSelectedProductIdRef.current || gestureSelectedProductId;
+    const currentIndex = visibleProducts.findIndex((item) => String(item.id) === String(selectedId));
+    const fallbackProduct = getGestureTargetProduct();
+    const fallbackIndex = fallbackProduct
+      ? visibleProducts.findIndex((item) => String(item.id) === String(fallbackProduct.id))
+      : -1;
+    const baseIndex = currentIndex >= 0 ? currentIndex : fallbackIndex;
+    const nextIndex = baseIndex >= 0
+      ? (baseIndex + direction + visibleProducts.length) % visibleProducts.length
+      : 0;
+    const nextId = visibleProducts[nextIndex].id;
+    const product = productsRef.current.find((item) => String(item.id) === String(nextId) && !item.outOfStock) || null;
+
+    if (!product) return null;
+    gestureSelectedProductIdRef.current = String(product.id);
+    setGestureSelectedProductId(String(product.id));
+    setGestureStatus(`Selected ${product.name}. Hold thumbs up to add it.`);
+    setAssistantMessage(`Selected ${product.name}. Use pointing up to move across visible products.`);
+    return product;
+  }
+
+  function selectGestureProductById(productId, reason = "cursor") {
+    const product = productsRef.current.find((item) => String(item.id) === String(productId) && !item.outOfStock);
+    if (!product) return null;
+
+    gestureSelectedProductIdRef.current = String(product.id);
+    setGestureSelectedProductId(String(product.id));
+    const reasonLabel = reason === "cursor" ? "Finger cursor" : "Gesture";
+    setGestureStatus(`${reasonLabel} selected ${product.name}. Hold thumbs up to add it.`);
+    setAssistantMessage(`Selected ${product.name}. Hold thumbs up to add it to cart.`);
+    return product;
+  }
+
+  function getProductUnderGestureCursor(x, y) {
+    const element = document.elementFromPoint(x, y);
+    const card = element?.closest?.("[data-gesture-product-id]");
+    if (!card) return null;
+    const productId = card.getAttribute("data-gesture-product-id");
+    const product = productsRef.current.find((item) => String(item.id) === String(productId) && !item.outOfStock);
+    return product || null;
+  }
+
+  function getLandmarkDistance(a, b) {
+    if (!a || !b) return 0;
+    return Math.hypot(Number(a.x || 0) - Number(b.x || 0), Number(a.y || 0) - Number(b.y || 0));
+  }
+
+  function isFingerExtended(landmarks, tipIndex, pipIndex) {
+    const wrist = landmarks?.[0];
+    const tip = landmarks?.[tipIndex];
+    const pip = landmarks?.[pipIndex];
+    if (!wrist || !tip || !pip) return false;
+    return getLandmarkDistance(tip, wrist) > getLandmarkDistance(pip, wrist) * 1.04;
+  }
+
+  function isPointingPose(landmarks) {
+    if (!landmarks || landmarks.length < 21) return false;
+    const indexExtended = isFingerExtended(landmarks, 8, 6);
+    const middleExtended = isFingerExtended(landmarks, 12, 10);
+    const ringExtended = isFingerExtended(landmarks, 16, 14);
+    const pinkyExtended = isFingerExtended(landmarks, 20, 18);
+
+    return indexExtended && [middleExtended, ringExtended, pinkyExtended].filter(Boolean).length <= 1;
+  }
+
+  function updateGesturePointer(landmarks) {
+    const indexTip = landmarks?.[8];
+    if (!indexTip || !Number.isFinite(indexTip.x) || !Number.isFinite(indexTip.y) || !isPointingPose(landmarks)) {
+      gestureCursorRef.current.targetId = "";
+      gestureCursorRef.current.startedAt = 0;
+      setGestureCursor((current) => ({ ...current, active: false, progress: 0, label: "" }));
+      return;
+    }
+
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const rawX = (1 - Math.max(0, Math.min(1, indexTip.x))) * viewportWidth;
+    const rawY = Math.max(0, Math.min(1, indexTip.y)) * viewportHeight;
+    const previous = gestureCursorRef.current;
+    const x = previous.lastUpdateAt ? previous.x * 0.55 + rawX * 0.45 : rawX;
+    const y = previous.lastUpdateAt ? previous.y * 0.55 + rawY * 0.45 : rawY;
+    const now = performance.now();
+    const product = getProductUnderGestureCursor(x, y);
+    const targetId = product ? String(product.id) : "";
+
+    if (now < Number(previous.cooldownUntil || 0)) {
+      previous.x = x;
+      previous.y = y;
+      previous.lastUpdateAt = now;
+      setGestureCursor({ active: true, x, y, progress: 0, label: "Added. Move to another product" });
+      return;
+    }
+
+    if (targetId && targetId !== previous.targetId) {
+      previous.startedAt = now;
+    } else if (!targetId) {
+      previous.startedAt = 0;
+    } else if (!previous.startedAt) {
+      previous.startedAt = now;
+    }
+
+    previous.x = x;
+    previous.y = y;
+    previous.targetId = targetId;
+    previous.lastUpdateAt = now;
+
+    const elapsed = targetId && previous.startedAt ? now - previous.startedAt : 0;
+    const progress = Math.min(100, Math.round((elapsed / GESTURE_DWELL_MS) * 100));
+    const label = product ? `Hold to add ${product.name}` : "Point at a product";
+
+    setGestureCursor({ active: true, x, y, progress, label });
+
+    if (product && elapsed >= GESTURE_DWELL_MS) {
+      selectGestureProductById(product.id, "cursor");
+      addProductDirectly(product);
+      setGestureStatus(`Finger cursor added ${product.name} to cart.`);
+      setAssistantMessage(`Added ${product.name}. Move your finger away before adding another product.`);
+      previous.startedAt = 0;
+      previous.targetId = "";
+      previous.cooldownUntil = now + 1200;
+      setGestureCursor({ active: true, x, y, progress: 100, label: `Added ${product.name}` });
+    }
+  }
+
+  function handleGestureAction(gestureName) {
+    const now = Date.now();
+    const last = gestureLastActionRef.current;
+    if (!gestureName || (last.name === gestureName && now - last.at < 1800) || now - last.at < 1200) return;
+    gestureLastActionRef.current = { name: gestureName, at: now };
+    const command = getGestureCommand(gestureName);
+
+    if (gestureName === "Thumb_Up") {
+      const product = getGestureTargetProduct();
+      if (product) {
+        addProductDirectly(product);
+        setGestureStatus(`Confirmed ${command.label}: added centered product ${product.name}`);
+        setAssistantMessage(`Added ${product.name}. Center a different product before thumbs up to choose another item.`);
+      } else {
+        setGestureStatus("No centered product found. Scroll until the product card is clearly in the middle.");
+        setAssistantMessage("Center a product card, then hold thumbs up.");
+      }
+      return;
+    }
+
+    if (gestureName === "Pointing_Up") {
+      const product = selectGestureProduct(1);
+      if (product) {
+        setGestureStatus(`Confirmed ${command.label}: selected ${product.name}`);
+      }
+      return;
+    }
+
+    if (gestureName === "Thumb_Down") {
+      const item = cartRef.current[cartRef.current.length - 1];
+      if (!item) {
+        setGestureStatus("Cart is empty");
+        setAssistantMessage("Cart is empty");
+        return;
+      }
+      setCart((current) => current.slice(0, -1));
+      setGestureStatus(`Confirmed ${command.label}: removed ${item.name}`);
+      setAssistantMessage(`Removed ${item.name}`);
+      showToast(`Removed ${item.name}`);
+      return;
+    }
+
+    if (gestureName === "Open_Palm") {
+      scrollPageByDirection("down");
+      setGestureStatus(`Confirmed ${command.label}: scrolling down`);
+      return;
+    }
+
+    if (gestureName === "Victory") {
+      openCheckoutFlow();
+      setGestureStatus(`Confirmed ${command.label}: opening checkout`);
+      return;
+    }
+
+    if (gestureName === "ILoveYou") {
+      openOrdersByVoice();
+      setGestureStatus(`Confirmed ${command.label}: opening orders`);
+      return;
+    }
+
+    if (gestureName === "Closed_Fist") {
+      scrollPageByDirection("up");
+      setGestureStatus(`Confirmed ${command.label}: scrolling up`);
+    }
+  }
+
+  function updateStableGesture(gesture) {
+    const name = gesture?.categoryName || "";
+    const score = Number(gesture?.score || 0);
+    const command = getGestureCommand(name);
+    const confidence = Math.round(score * 100);
+
+    if (!name || score < 0.62 || name === "None") {
+      gestureStableRef.current = { name: "", count: 0, score: 0 };
+      setGestureDetected({ label: "Looking", confidence: 0, action: "Show one hand clearly" });
+      return;
+    }
+
+    const stable = gestureStableRef.current;
+    if (stable.name === name) {
+      stable.count += 1;
+      stable.score = Math.max(stable.score, score);
+    } else {
+      stable.name = name;
+      stable.count = 1;
+      stable.score = score;
+    }
+
+    const progress = Math.min(100, Math.round((stable.count / 4) * 100));
+    const targetProduct = name === "Thumb_Up" ? getGestureTargetProduct() : null;
+    const selectedProduct = gestureSelectedProductIdRef.current
+      ? productsRef.current.find((product) => String(product.id) === String(gestureSelectedProductIdRef.current))
+      : null;
+    const action = targetProduct
+      ? `Add ${targetProduct.name}`
+      : name === "Pointing_Up" && selectedProduct
+        ? `Move selection from ${selectedProduct.name}`
+        : command.action;
+    setGestureDetected({ label: command.label, confidence, action });
+    setGestureStatus(`${command.label} detected (${confidence}%). ${action}. Hold steady ${progress}%.`);
+
+    if (stable.count >= 4) {
+      stable.count = 0;
+      handleGestureAction(name);
+    }
+  }
+
+  function scanGestureFrame() {
+    const video = gestureVideoRef.current;
+    const recognizer = gestureRecognizerRef.current;
+    if (!video || !recognizer || video.readyState < 2) {
+      gestureRafRef.current = requestAnimationFrame(scanGestureFrame);
+      return;
+    }
+
+    if (video.currentTime !== gestureLastVideoTimeRef.current) {
+      gestureLastVideoTimeRef.current = video.currentTime;
+      try {
+        const result = recognizer.recognizeForVideo(video, performance.now());
+        const landmarks = result?.landmarks?.[0] || result?.handLandmarks?.[0] || [];
+        updateGesturePointer(landmarks);
+        updateStableGesture(result?.gestures?.[0]?.[0]);
+      } catch {
+        setGestureStatus("Gesture tracking paused. Keep your hand in view.");
+      }
+    }
+
+    gestureRafRef.current = requestAnimationFrame(scanGestureFrame);
+  }
+
+  async function startGestureCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showToast("Camera is not supported in this browser");
+      return;
+    }
+    if (window.location.protocol !== "https:" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+      showToast("Gestures need HTTPS or localhost camera access");
+      setGestureStatus("Open this site over HTTPS or localhost to use gesture camera.");
+      return;
+    }
+
+    setIsGestureLoading(true);
+    setGestureStatus("Loading gesture model...");
+    setGestureDetected({ label: "Loading", confidence: 0, action: "Preparing camera" });
+    try {
+      const recognizer = await loadGestureRecognizer();
+      stopGestureCamera();
+      gestureRecognizerRef.current = recognizer;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 960 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 24, max: 30 }
+        },
+        audio: false
+      });
+      gestureStreamRef.current = stream;
+      if (gestureVideoRef.current) {
+        gestureVideoRef.current.srcObject = stream;
+        await gestureVideoRef.current.play();
+      }
+      setGestureCameraOn(true);
+      setGestureStatus("Gesture mode ready. Point your index finger over a product for a moment to add it.");
+      setGestureDetected({ label: "Ready", confidence: 0, action: "Finger hold adds, palm down, fist up" });
+      setAssistantMessage("Gesture mode ready. Point over a product to add it, open palm to go down, fist to go up.");
+      gestureLastActionRef.current = { name: "", at: 0 };
+      gestureStableRef.current = { name: "", count: 0, score: 0 };
+      gestureLastVideoTimeRef.current = -1;
+      gestureSelectedProductIdRef.current = "";
+      gestureCursorRef.current = { x: 0, y: 0, targetId: "", startedAt: 0, lastUpdateAt: 0, cooldownUntil: 0 };
+      setGestureSelectedProductId("");
+      gestureRafRef.current = requestAnimationFrame(scanGestureFrame);
+    } catch (err) {
+      console.error("Gesture mode failed:", err && err.message ? err.message : err);
+      showToast("Unable to start gesture mode");
+      setGestureStatus("Gesture mode could not start. Check camera permission and network access.");
+      setGestureDetected({ label: "Blocked", confidence: 0, action: "Allow camera permission" });
+      stopGestureCamera();
+    } finally {
+      setIsGestureLoading(false);
+    }
+  }
+
   function openCheckoutFlow() {
-    if (!cart.length) {
+    const currentCart = cartRef.current || cart;
+    const currentUser = userRef.current || user;
+    if (!currentCart.length) {
       showToast("Cart is empty");
       return;
     }
-    if (!user) {
+    if (!currentUser) {
       setShowAuth(true);
       showToast("Please login or signup first");
       return;
     }
-    setCheckout((prev) => ({ ...prev, fullName: prev.fullName || user.name || "" }));
+    setCheckout((prev) => ({
+      ...prev,
+      fullName: prev.fullName || currentUser.name || "",
+      contactNumber: prev.contactNumber || currentUser.mobileNumber || ""
+    }));
     setShowCheckout(true);
   }
 
@@ -489,11 +1621,22 @@ export default function App() {
       return;
     }
 
-    if (isVoiceListening) {
+    if (voiceShouldListenRef.current || isVoiceListening) {
+      voiceShouldListenRef.current = false;
+      if (voiceRestartTimerRef.current) {
+        window.clearTimeout(voiceRestartTimerRef.current);
+        voiceRestartTimerRef.current = null;
+      }
       recognition.stop();
+      setIsVoiceListening(false);
+      setIsVoiceCommandActive(false);
+      setAssistantMessage("Voice command stopped");
       return;
     }
 
+    voiceShouldListenRef.current = true;
+    setIsVoiceCommandActive(true);
+    setAssistantMessage("Listening for voice commands");
     try {
       recognition.start();
     } catch {
@@ -588,12 +1731,76 @@ export default function App() {
     addToCart(product, firstAvailableVariant || null);
   }
 
+  async function placeOrder() {
+    if (isPlacingOrderRef.current) return false;
+    isPlacingOrderRef.current = true;
+    setIsPlacingOrder(true);
+    try {
+      const currentCheckout = checkoutRef.current || checkout;
+      const currentCart = cartRef.current || cart;
+      const payload = {
+        fullName: String(currentCheckout.fullName || "").trim(),
+        contactNumber: String(currentCheckout.contactNumber || "").trim(),
+        tipAmount: Number(currentCheckout.tipAmount || 0),
+        promoCode: sanitizePromoCode(currentCheckout.promoCode),
+        useWalletCoins: Boolean(currentCheckout.useWalletCoins),
+        paymentMethod: currentCheckout.paymentMethod,
+        address: currentCheckout.address,
+        items: currentCart.map((c) => ({
+          productId: c.productId,
+          quantity: c.quantity,
+          variant: c.variant
+        }))
+      };
+
+      if (payload.fullName.length < 2) {
+        showToast("Please enter full name");
+        return false;
+      }
+      if (!/^\d{10}$/.test(payload.contactNumber)) {
+        showToast("Please enter a valid 10-digit mobile number");
+        return false;
+      }
+      if (!Number.isFinite(payload.tipAmount) || payload.tipAmount < 0 || payload.tipAmount > 5000) {
+        showToast("Tip should be between 0 and 5000");
+        return false;
+      }
+
+      const data = await api("/api/orders", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+
+      setCart([]);
+      setCheckout((prev) => ({ ...prev, tipAmount: "", promoCode: "", useWalletCoins: false }));
+      setPromoPreview({ valid: false, code: "", discountAmount: 0, message: "No promo applied" });
+      if (data.walletBalance !== undefined) {
+        setWallet((prev) => ({ ...prev, balance: Number(data.walletBalance || 0) }));
+      }
+      setShowCheckout(false);
+      setCelebrationOrderCode(data.orderId.slice(-6).toUpperCase());
+      setShowOrderCelebration(true);
+      setTimeout(() => setShowOrderCelebration(false), 2600);
+      showToast(`Order placed successfully (#${data.orderId.slice(-6).toUpperCase()})`);
+      loadOrders();
+      loadWallet();
+      return true;
+    } catch (err) {
+      showToast(err.message);
+      return false;
+    } finally {
+      isPlacingOrderRef.current = false;
+      setIsPlacingOrder(false);
+    }
+  }
+
   async function applyPromoCode() {
-    const code = checkout.promoCode.trim();
+    const code = sanitizePromoCode(checkout.promoCode);
     if (!code) {
       setPromoPreview({ valid: false, code: "", discountAmount: 0, message: "No promo applied" });
       return;
     }
+    setCheckout((current) => ({ ...current, promoCode: code }));
 
     try {
       const data = await api(`/api/promos/validate?code=${encodeURIComponent(code)}&subtotal=${cartSubtotal}`);
@@ -656,8 +1863,10 @@ export default function App() {
 
     return (
       <article
-        className="product-card"
+        className={`product-card ${String(gestureSelectedProductId) === String(p.id) ? "gesture-selected" : ""}`}
         key={p.id}
+        data-gesture-product-id={p.id}
+        data-gesture-product-name={p.name}
         role="button"
         tabIndex={0}
         onClick={() => openProductPreview(p)}
@@ -708,48 +1917,62 @@ export default function App() {
   }
 
   async function loadOrders() {
-    if (!user) {
+    const currentUser = userRef.current || user;
+    if (!currentUser) {
       setOrders([]);
-      return;
+      return [];
     }
 
     try {
       const data = await api("/api/orders/my");
-      setOrders(data.orders || []);
+      const nextOrders = data.orders || [];
+      setOrders(nextOrders);
+      return nextOrders;
     } catch {
       setOrders([]);
+      return [];
     }
   }
 
   async function loadComplaints() {
-    if (!user) {
+    const currentUser = userRef.current || user;
+    if (!currentUser) {
       setComplaints([]);
-      return;
+      return [];
     }
 
     try {
       const data = await api("/api/complaints/my");
-      setComplaints(data.complaints || []);
+      const nextComplaints = data.complaints || [];
+      setComplaints(nextComplaints);
+      return nextComplaints;
     } catch {
       setComplaints([]);
+      return [];
     }
   }
 
   async function loadWallet() {
-    if (!user) {
-      setWallet({ balance: 0, transactions: [], rewardRate: null });
-      return;
+    const currentUser = userRef.current || user;
+    if (!currentUser) {
+      const emptyWallet = { balance: 0, transactions: [], rewardRate: null };
+      setWallet(emptyWallet);
+      return emptyWallet;
     }
 
     try {
       const data = await api("/api/wallet");
-      setWallet({
+      const nextWallet = {
         balance: Number(data.balance || 0),
         transactions: data.transactions || [],
         rewardRate: data.rewardRate || null
-      });
+      };
+      setWallet(nextWallet);
+      return nextWallet;
     } catch {
-      setWallet({ balance: Number(user.walletCoins || 0), transactions: [], rewardRate: null });
+      const fallbackWallet = { balance: Number(currentUser.walletCoins || 0), transactions: [], rewardRate: null };
+      setWallet(fallbackWallet);
+      return fallbackWallet;
     }
   }
 
@@ -899,25 +2122,54 @@ export default function App() {
     setVoiceSupported(true);
     const recognition = new SpeechRecognition();
     recognition.lang = "en-IN";
+    recognition.continuous = true;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
     recognition.onstart = () => setIsVoiceListening(true);
     recognition.onresult = (event) => {
-      const transcript = String(event?.results?.[0]?.[0]?.transcript || "").trim();
-      if (!transcript) return;
-      setSearchQuery(transcript);
-      showToast(`Searching: ${transcript}`);
+      for (let index = event.resultIndex || 0; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result?.isFinal) continue;
+        const transcript = String(result?.[0]?.transcript || "").trim();
+        if (transcript) runShoppingCommand(transcript);
+      }
     };
     recognition.onerror = (event) => {
       if (event?.error === "aborted" || event?.error === "no-speech") return;
+      voiceShouldListenRef.current = false;
+      setIsVoiceCommandActive(false);
       showToast("Unable to capture voice. Please try again.");
     };
-    recognition.onend = () => setIsVoiceListening(false);
+    recognition.onend = () => {
+      setIsVoiceListening(false);
+      if (!voiceShouldListenRef.current) {
+        setIsVoiceCommandActive(false);
+        return;
+      }
+
+      if (voiceRestartTimerRef.current) {
+        window.clearTimeout(voiceRestartTimerRef.current);
+      }
+      voiceRestartTimerRef.current = window.setTimeout(() => {
+        if (!voiceShouldListenRef.current || voiceRecognitionRef.current !== recognition) return;
+        try {
+          recognition.start();
+        } catch {
+          // The browser can briefly reject restarts while it settles; the next stop/start click will recover it.
+        }
+      }, 220);
+    };
 
     voiceRecognitionRef.current = recognition;
 
     return () => {
+      voiceShouldListenRef.current = false;
+      setIsVoiceCommandActive(false);
+      if (voiceRestartTimerRef.current) {
+        window.clearTimeout(voiceRestartTimerRef.current);
+        voiceRestartTimerRef.current = null;
+      }
       recognition.onstart = null;
       recognition.onresult = null;
       recognition.onerror = null;
@@ -949,6 +2201,21 @@ export default function App() {
   }, [showFreshnessChecker]);
 
   useEffect(() => () => stopFreshnessCamera(), []);
+
+  useEffect(() => () => stopGestureCamera(), []);
+
+  useEffect(() => {
+    const video = gestureVideoRef.current;
+    const stream = gestureStreamRef.current;
+    if (!gestureCameraOn || !video || !stream) return;
+
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
+    video.play().catch(() => {
+      setGestureStatus("Tap Start Gestures again if the camera preview does not resume.");
+    });
+  }, [gestureCameraOn, showFarmAssistant]);
 
   useEffect(() => {
     if (!showMainMenu) return undefined;
@@ -1409,10 +2676,10 @@ export default function App() {
                   placeholder={animatedSearchHint}
                 />
                 <button
-                  className={`voice-search-btn ${isVoiceListening ? "active" : ""}`}
+                  className={`voice-search-btn ${isVoiceCommandActive || isVoiceListening ? "active" : ""}`}
                   type="button"
-                  aria-label={isVoiceListening ? "Stop voice search" : "Start voice search"}
-                  title={isVoiceListening ? "Listening..." : "Voice search"}
+                  aria-label={isVoiceCommandActive || isVoiceListening ? "Stop voice search" : "Start voice search"}
+                  title={isVoiceCommandActive || isVoiceListening ? "Stop voice search" : "Voice search"}
                   onClick={startVoiceSearch}
                   disabled={!voiceSupported}
                 >
@@ -1490,7 +2757,7 @@ export default function App() {
             ) : null}
           </div>
 
-          <aside className="cart-panel">
+          <aside className="cart-panel" ref={cartPanelRef}>
             <h3 className="cart-title">
               <span>Cart</span>
               {cartItemCount ? <span className="cart-count-badge">{cartItemCount}</span> : null}
@@ -1578,15 +2845,103 @@ export default function App() {
         <img className="farmer-mascot-image" src="/resources/farmer-mascot-main.png" alt="" />
       </div>
 
-      {showCheckout ? (
-        <>
-          <img
-            className="checkout-mascot-desktop"
-            src="/resources/farmer-mascot-main.png"
-            alt=""
-            aria-hidden="true"
-          />
-        </>
+      <button
+        className={`farm-assistant-launcher ${farmAssistantActive ? "is-active" : ""}`}
+        type="button"
+        onClick={() => setShowFarmAssistant(true)}
+      >
+        <img src="/resources/farmer-mascot-main.png" alt="" aria-hidden="true" />
+        <span>Farm Assistant</span>
+        <span className="assistant-live-dot" aria-hidden="true" />
+      </button>
+
+      {showFarmAssistant ? (
+        <aside className="assistant-dock" aria-label="Farm Assistant">
+          <div className={`assistant-dock-card ${farmAssistantActive ? "is-active" : ""}`}>
+            <button className="close-btn" onClick={() => setShowFarmAssistant(false)} aria-label="Close Farm Assistant">x</button>
+            <p className="kicker">Farm Assistant</p>
+            <h3>Shop with voice and gestures</h3>
+            <p className="muted small">
+              Say add milk, scroll down, show cart, show orders, checkout, or use gestures.
+            </p>
+
+            <div className="assistant-status">
+              <strong>{isVoiceCommandActive || isVoiceListening ? "Listening..." : "Ready"}</strong>
+              <span>{assistantTranscript || assistantMessage}</span>
+            </div>
+
+            <div className="assistant-actions">
+              <button className="btn-primary" type="button" onClick={startVoiceSearch} disabled={!voiceSupported}>
+                {isVoiceCommandActive || isVoiceListening ? "Stop Voice Command" : "Voice Command"}
+              </button>
+              <button
+                className="btn-ghost"
+                type="button"
+                onClick={gestureCameraOn ? stopGestureCamera : startGestureCamera}
+                disabled={isGestureLoading}
+              >
+                {isGestureLoading ? "Starting..." : gestureCameraOn ? "Stop Gestures" : "Start Gestures"}
+              </button>
+            </div>
+
+            <div className="gesture-panel">
+              <div className="gesture-video-wrap">
+                <video ref={gestureVideoRef} className="gesture-video" playsInline muted />
+                {gestureCameraOn ? (
+                  <div className="gesture-overlay" aria-live="polite">
+                    <div>
+                      <strong>{gestureDetected.label}</strong>
+                      <small>{gestureDetected.action}</small>
+                    </div>
+                    <span>{gestureDetected.confidence ? `${gestureDetected.confidence}%` : "Hold steady"}</span>
+                  </div>
+                ) : null}
+                {!gestureCameraOn ? (
+                  <div className="gesture-empty">
+                    <strong>Gesture camera</strong>
+                    <span>Point over a product for a moment to add. Palm down. Fist up.</span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="gesture-help">
+                <span>{gestureStatus}</span>
+                <div className="gesture-command-grid" aria-label="Gesture commands">
+                  <span>Finger Hold: Add</span>
+                  <span>Thumbs Down: Remove</span>
+                  <span>Thumbs Up: Add Selected</span>
+                  <span>Open Palm: Down</span>
+                  <span>Fist: Up</span>
+                  <span>Victory: Checkout</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      ) : null}
+
+      {gestureCameraOn && !showFarmAssistant ? (
+        <video
+          ref={gestureVideoRef}
+          className="gesture-processing-video"
+          playsInline
+          muted
+          aria-hidden="true"
+        />
+      ) : null}
+
+      {gestureCameraOn && gestureCursor.active ? (
+        <div
+          className={`gesture-screen-cursor ${gestureCursor.progress >= 100 ? "is-complete" : ""}`}
+          style={{
+            left: `${gestureCursor.x}px`,
+            top: `${gestureCursor.y}px`,
+            "--gesture-progress": `${gestureCursor.progress}%`
+          }}
+          aria-hidden="true"
+        >
+          <span />
+          <small>{gestureCursor.label}</small>
+        </div>
       ) : null}
 
       {showFreshnessChecker ? (
@@ -1602,7 +2957,7 @@ export default function App() {
             <h3>Scan products before you cook</h3>
             <p className="muted small">
               Point your camera at one supported fruit or vegetable in good light. Non-food items and unclear images
-              will be rejected instead of rated.
+              will be rejected instead of rated. Tap the camera button when the product is centered.
             </p>
 
             <div className="freshness-grid">
@@ -1613,6 +2968,18 @@ export default function App() {
                     <strong>Camera preview</strong>
                     <span>Use camera or upload an image</span>
                   </div>
+                ) : null}
+                {freshnessCameraOn ? (
+                  <button
+                    className="freshness-capture-btn"
+                    type="button"
+                    disabled={isFreshnessAnalyzing}
+                    onClick={() => analyzeFreshnessImage(freshnessVideoRef.current)}
+                    aria-label="Capture and check freshness"
+                    title="Capture and check freshness"
+                  >
+                    <span />
+                  </button>
                 ) : null}
                 <canvas ref={freshnessCanvasRef} className="freshness-canvas" aria-hidden="true" />
               </div>
@@ -1644,14 +3011,6 @@ export default function App() {
             <div className="freshness-actions">
               <button className="btn-primary" type="button" onClick={startFreshnessCamera}>
                 {freshnessCameraOn ? "Restart Camera" : "Start Camera"}
-              </button>
-              <button
-                className="btn-ghost"
-                type="button"
-                disabled={!freshnessCameraOn || isFreshnessAnalyzing}
-                onClick={() => analyzeFreshnessImage(freshnessVideoRef.current)}
-              >
-                {isFreshnessAnalyzing ? "Checking..." : "Analyze Frame"}
               </button>
               <label className="btn-ghost freshness-upload">
                 Upload Photo
@@ -2102,60 +3461,7 @@ export default function App() {
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                if (isPlacingOrder) return;
-                setIsPlacingOrder(true);
-                try {
-                  const payload = {
-                    fullName: checkout.fullName.trim(),
-                    contactNumber: checkout.contactNumber.trim(),
-                    tipAmount: Number(checkout.tipAmount || 0),
-                    promoCode: checkout.promoCode.trim(),
-                    useWalletCoins: Boolean(checkout.useWalletCoins),
-                    paymentMethod: checkout.paymentMethod,
-                    address: checkout.address,
-                    items: cart.map((c) => ({
-                      productId: c.productId,
-                      quantity: c.quantity,
-                      variant: c.variant
-                    }))
-                  };
-
-                  if (payload.fullName.length < 2) {
-                    showToast("Please enter full name");
-                    return;
-                  }
-                  if (!/^\d{10}$/.test(payload.contactNumber)) {
-                    showToast("Please enter a valid 10-digit mobile number");
-                    return;
-                  }
-                  if (!Number.isFinite(payload.tipAmount) || payload.tipAmount < 0 || payload.tipAmount > 5000) {
-                    showToast("Tip should be between 0 and 5000");
-                    return;
-                  }
-
-                  const data = await api("/api/orders", {
-                    method: "POST",
-                    body: JSON.stringify(payload)
-                  });
-
-                  setCart([]);
-                  setCheckout((prev) => ({ ...prev, tipAmount: "", promoCode: "", useWalletCoins: false }));
-                  setPromoPreview({ valid: false, code: "", discountAmount: 0, message: "No promo applied" });
-                  if (data.walletBalance !== undefined) {
-                    setWallet((prev) => ({ ...prev, balance: Number(data.walletBalance || 0) }));
-                  }
-                  setShowCheckout(false);
-                  setCelebrationOrderCode(data.orderId.slice(-6).toUpperCase());
-                  setShowOrderCelebration(true);
-                  setTimeout(() => setShowOrderCelebration(false), 2600);
-                  showToast(`Order placed successfully (#${data.orderId.slice(-6).toUpperCase()})`);
-                  loadOrders();
-                  loadWallet();
-                } catch (err) {
-                  showToast(err.message);
-                } finally {
-                  setIsPlacingOrder(false);
-                }
+                await placeOrder();
               }}
             >
               <div className="field">
@@ -2198,7 +3504,7 @@ export default function App() {
                 <label>Promo Code</label>
                 <input
                   value={checkout.promoCode}
-                  onChange={(e) => setCheckout((s) => ({ ...s, promoCode: e.target.value }))}
+                  onChange={(e) => setCheckout((s) => ({ ...s, promoCode: sanitizePromoCode(e.target.value) }))}
                   type="text"
                   placeholder="Enter promo code"
                 />
@@ -2285,6 +3591,21 @@ export default function App() {
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingAssistantOrderConfirmation ? (
+        <div className="assistant-confirm-card" role="dialog" aria-live="assertive" aria-label="Confirm order placement">
+          <strong>Place this order?</strong>
+          <span>Say yes to place order, or no to cancel.</span>
+          <div>
+            <button className="btn-primary small" type="button" onClick={confirmAssistantOrderPlacement}>
+              Yes
+            </button>
+            <button className="btn-ghost small" type="button" onClick={cancelAssistantOrderPlacement}>
+              No
+            </button>
           </div>
         </div>
       ) : null}
