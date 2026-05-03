@@ -307,6 +307,21 @@ function normalizeRoboflowModelId(value) {
     .replace(/\s+/g, "");
 }
 
+function getRoboflowModelIds(value) {
+  const configured = String(value || "")
+    .split(",")
+    .map(normalizeRoboflowModelId)
+    .filter(Boolean);
+  const candidates = [
+    ...configured,
+    "freshness-fruits-and-vegetables-p8g5m/1",
+    "freshness-fruits-and-vegetables-worff/1",
+    "freshness-fruits-and-vegetables/1",
+    "fruits-fresh-and-rotten-rkl2w/1"
+  ];
+  return [...new Set(candidates)];
+}
+
 function normalizeRoboflowApiBaseUrl(value) {
   const raw = String(value || "").trim().replace(/\/+$/, "");
   return raw || "https://serverless.roboflow.com";
@@ -315,11 +330,30 @@ function normalizeRoboflowApiBaseUrl(value) {
 function getRoboflowFallbackBaseUrls(apiBaseUrl) {
   const urls = [
     apiBaseUrl,
+    "https://serverless.roboflow.com",
     "https://detect.roboflow.com",
-    "https://classify.roboflow.com",
-    "https://serverless.roboflow.com"
+    "https://classify.roboflow.com"
   ];
   return [...new Set(urls.filter(Boolean))];
+}
+
+function extractRoboflowPredictionArrays(value, output = []) {
+  if (!value || typeof value !== "object") return output;
+
+  if (Array.isArray(value)) {
+    if (value.some((item) => item && typeof item === "object" && ("class" in item || "class_name" in item || "label" in item))) {
+      output.push(value);
+    }
+    value.forEach((item) => extractRoboflowPredictionArrays(item, output));
+    return output;
+  }
+
+  if (Array.isArray(value.predictions)) {
+    output.push(value.predictions);
+  }
+
+  Object.values(value).forEach((item) => extractRoboflowPredictionArrays(item, output));
+  return output;
 }
 
 function getRoboflowPredictions(data) {
@@ -335,6 +369,9 @@ function getRoboflowPredictions(data) {
   if (data?.top) {
     return [{ class: data.top, confidence: Number(data.confidence || 0) }];
   }
+
+  const nested = extractRoboflowPredictionArrays(data);
+  if (nested.length) return nested.flat();
 
   return [];
 }
@@ -528,17 +565,31 @@ app.get("/api/resources/images", (_req, res) => {
   res.json({ files });
 });
 
+app.get("/api/freshness/config", (_req, res) => {
+  const apiKey = String(process.env.ROBOFLOW_API_KEY || "").trim();
+  const configuredModelIds = getRoboflowModelIds(process.env.ROBOFLOW_FRESHNESS_MODEL);
+  const apiBaseUrl = normalizeRoboflowApiBaseUrl(process.env.ROBOFLOW_API_URL);
+
+  res.json({
+    configured: Boolean(apiKey && configuredModelIds.length),
+    hasApiKey: Boolean(apiKey),
+    modelIds: configuredModelIds.map((id) => id.replace(/^[^/]+/, (project) => project)),
+    apiBaseUrl,
+    fallbackBaseUrls: getRoboflowFallbackBaseUrls(apiBaseUrl)
+  });
+});
+
 app.post("/api/freshness/check", async (req, res) => {
   try {
     const apiKey = String(process.env.ROBOFLOW_API_KEY || "").trim();
-    const modelId = normalizeRoboflowModelId(process.env.ROBOFLOW_FRESHNESS_MODEL || "fruits-fresh-and-rotten-rkl2w/1");
+    const modelIds = getRoboflowModelIds(process.env.ROBOFLOW_FRESHNESS_MODEL || "fruits-fresh-and-rotten-rkl2w/1");
     const apiBaseUrl = normalizeRoboflowApiBaseUrl(process.env.ROBOFLOW_API_URL);
     const image = String(req.body.image || "").trim();
 
     if (!apiKey) {
       return res.status(503).json({ error: "Freshness model is not configured" });
     }
-    if (!modelId || !/^[a-z0-9][a-z0-9-_/]*\/\d+$/i.test(modelId)) {
+    if (!modelIds.length || modelIds.some((modelId) => !/^[a-z0-9][a-z0-9-_/]*\/\d+$/i.test(modelId))) {
       return res.status(503).json({ error: "Freshness model id is invalid" });
     }
     if (!image || !image.startsWith("data:image/")) {
@@ -548,30 +599,56 @@ app.post("/api/freshness/check", async (req, res) => {
     let response;
     let data;
     let endpoint;
+    let successfulModelId = null;
     const failures = [];
-    for (const baseUrl of getRoboflowFallbackBaseUrls(apiBaseUrl)) {
-      const result = await callRoboflowModel({ apiBaseUrl: baseUrl, modelId, apiKey, image });
-      response = result.response;
-      data = result.data;
-      endpoint = result.endpoint;
-      if (response.ok) break;
-      failures.push({
-        status: response.status,
-        endpoint: endpoint.replace(apiKey, "***"),
-        error: data?.error || data?.message || response.statusText
-      });
+    for (const modelId of modelIds) {
+      for (const baseUrl of getRoboflowFallbackBaseUrls(apiBaseUrl)) {
+        const result = await callRoboflowModel({ apiBaseUrl: baseUrl, modelId, apiKey, image });
+        response = result.response;
+        data = result.data;
+        endpoint = result.endpoint;
+        if (response.ok) {
+          successfulModelId = modelId;
+          break;
+        }
+        failures.push({
+          modelId,
+          status: response.status,
+          endpoint: endpoint.replace(apiKey, "***"),
+          error: data?.error || data?.message || response.statusText
+        });
+      }
+      if (response?.ok) break;
     }
 
     if (!response.ok) {
       console.error("Roboflow freshness error:", {
-        modelId,
+        modelIds,
         failures
       });
-      return res.status(502).json({ error: "Freshness model request failed" });
+      return res.status(502).json({
+        error: "Freshness model request failed",
+        details: {
+          triedModelIds: modelIds,
+          failures: failures.slice(-6).map((failure) => ({
+            modelId: failure.modelId,
+            status: failure.status,
+            endpointHost: failure.endpoint.replace(/^https?:\/\/([^/]+).*/, "$1"),
+            error: failure.error
+          }))
+        }
+      });
     }
 
     const result = summarizeFreshnessPredictions(getRoboflowPredictions(data));
-    res.json({ result, rawModel: { image: data.image || null, endpointType: new URL(endpoint).hostname } });
+    res.json({
+      result,
+      rawModel: {
+        image: data.image || null,
+        modelId: successfulModelId,
+        endpointType: new URL(endpoint).hostname
+      }
+    });
   } catch (err) {
     console.error("Freshness check failed:", err && err.message ? err.message : err);
     res.status(500).json({ error: "Unable to check freshness right now" });

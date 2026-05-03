@@ -40,3 +40,9 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: ROBOFLOW_API_KEY
+        sync: false
+      - key: ROBOFLOW_FRESHNESS_MODEL
+        sync: false
+      - key: ROBOFLOW_API_URL
+        value: "https://detect.roboflow.com"

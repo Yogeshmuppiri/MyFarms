@@ -1058,16 +1058,21 @@ export default function App() {
       const imageDataUrl = canvas.toDataURL("image/jpeg", 0.86);
       const modelResult = await checkFreshnessWithModel(imageDataUrl);
       setFreshnessResult(modelResult);
-    } catch {
-      setFreshnessResult({
+    } catch (err) {
+      const localResult = evaluateFreshnessFromCanvas(canvas) || {
         label: "Could not confirm freshness",
-        advice: "Freshness model is unavailable. Please try again after API setup is complete.",
+        advice: "Freshness model is unavailable. Try again with one fruit or vegetable centered in good light.",
         score: 0,
         confidence: 0,
         source: "local",
         detectedClass: null
+      };
+      setFreshnessResult({
+        ...localResult,
+        advice: `${localResult.advice} Model check is temporarily unavailable.`
       });
-      showToast("Freshness API is not available");
+      const detail = err?.data?.details?.failures?.[0];
+      showToast(detail?.error ? `Freshness model issue: ${detail.error}` : "Freshness model unavailable; showing local estimate");
     } finally {
       setIsFreshnessAnalyzing(false);
     }
