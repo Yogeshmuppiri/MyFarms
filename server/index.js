@@ -314,10 +314,10 @@ function getRoboflowModelIds(value) {
     .filter(Boolean);
   const candidates = [
     ...configured,
+    "fruits-fresh-and-rotten-rkl2w/1",
     "freshness-fruits-and-vegetables-p8g5m/1",
     "freshness-fruits-and-vegetables-worff/1",
-    "freshness-fruits-and-vegetables/1",
-    "fruits-fresh-and-rotten-rkl2w/1"
+    "freshness-fruits-and-vegetables/1"
   ];
   return [...new Set(candidates)];
 }
@@ -472,6 +472,17 @@ function summarizeFreshnessPredictions(predictions) {
   };
 }
 
+function getFreshnessResultQuality(result) {
+  if (!result) return 0;
+  const hasCondition = result.score > 0 && result.detectedClass;
+  const predictionCount = Array.isArray(result.predictions) ? result.predictions.length : 0;
+  return (
+    (hasCondition ? 1000 : 0) +
+    Number(result.confidence || 0) +
+    predictionCount * 2
+  );
+}
+
 function normalizeProductDescription(value) {
   return String(value || "").trim();
 }
@@ -600,6 +611,9 @@ app.post("/api/freshness/check", async (req, res) => {
     let data;
     let endpoint;
     let successfulModelId = null;
+    let bestFreshnessResult = null;
+    let bestRawModel = null;
+    let bestQuality = 0;
     const failures = [];
     for (const modelId of modelIds) {
       for (const baseUrl of getRoboflowFallbackBaseUrls(apiBaseUrl)) {
@@ -608,8 +622,28 @@ app.post("/api/freshness/check", async (req, res) => {
         data = result.data;
         endpoint = result.endpoint;
         if (response.ok) {
-          successfulModelId = modelId;
-          break;
+          const freshnessResult = summarizeFreshnessPredictions(getRoboflowPredictions(data));
+          const quality = getFreshnessResultQuality(freshnessResult);
+          if (quality > bestQuality) {
+            bestQuality = quality;
+            bestFreshnessResult = freshnessResult;
+            bestRawModel = {
+              image: data.image || null,
+              modelId,
+              endpointType: new URL(endpoint).hostname
+            };
+          }
+          if (freshnessResult.score > 0 && freshnessResult.detectedClass) {
+            successfulModelId = modelId;
+            break;
+          }
+          failures.push({
+            modelId,
+            status: response.status,
+            endpoint: endpoint.replace(apiKey, "***"),
+            error: "Model returned no usable fresh/rotten prediction"
+          });
+          continue;
         }
         failures.push({
           modelId,
@@ -618,10 +652,10 @@ app.post("/api/freshness/check", async (req, res) => {
           error: data?.error || data?.message || response.statusText
         });
       }
-      if (response?.ok) break;
+      if (successfulModelId) break;
     }
 
-    if (!response.ok) {
+    if (!response?.ok && !bestFreshnessResult) {
       console.error("Roboflow freshness error:", {
         modelIds,
         failures
@@ -640,13 +674,12 @@ app.post("/api/freshness/check", async (req, res) => {
       });
     }
 
-    const result = summarizeFreshnessPredictions(getRoboflowPredictions(data));
     res.json({
-      result,
-      rawModel: {
-        image: data.image || null,
+      result: bestFreshnessResult || summarizeFreshnessPredictions([]),
+      rawModel: bestRawModel || {
+        image: data?.image || null,
         modelId: successfulModelId,
-        endpointType: new URL(endpoint).hostname
+        endpointType: endpoint ? new URL(endpoint).hostname : null
       }
     });
   } catch (err) {

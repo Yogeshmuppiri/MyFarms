@@ -45,4 +45,4 @@ services:
       - key: ROBOFLOW_FRESHNESS_MODEL
         sync: false
       - key: ROBOFLOW_API_URL
-        value: "https://detect.roboflow.com"
+        value: "https://serverless.roboflow.com"
