@@ -3601,16 +3601,18 @@ export default function App() {
       ) : null}
 
       {pendingAssistantOrderConfirmation ? (
-        <div className="assistant-confirm-card" role="dialog" aria-live="assertive" aria-label="Confirm order placement">
-          <strong>Place this order?</strong>
-          <span>Say yes to place order, or no to cancel.</span>
-          <div>
-            <button className="btn-primary small" type="button" onClick={confirmAssistantOrderPlacement}>
-              Yes
-            </button>
-            <button className="btn-ghost small" type="button" onClick={cancelAssistantOrderPlacement}>
-              No
-            </button>
+        <div className="assistant-confirm-overlay" role="presentation">
+          <div className="assistant-confirm-card" role="dialog" aria-modal="true" aria-live="assertive" aria-label="Confirm order placement">
+            <strong>Place this order?</strong>
+            <span>Say yes to place order, or no to cancel.</span>
+            <div>
+              <button className="btn-primary small" type="button" onClick={confirmAssistantOrderPlacement}>
+                Yes
+              </button>
+              <button className="btn-ghost small" type="button" onClick={cancelAssistantOrderPlacement}>
+                No
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
