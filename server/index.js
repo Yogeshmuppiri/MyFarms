@@ -18,6 +18,8 @@ const {
   sendComplaintClosedEmail,
   sendEmailVerificationEmail,
   sendWelcomeEmail,
+  sendAdministrativeEmployeeWelcomeEmail,
+  sendDeliveryAssignmentEmail,
   hasSmtpConfig
 } = require("./mailer");
 
@@ -34,6 +36,20 @@ const ORDER_RETENTION_DAYS = 60;
 const COMPLAINT_RETENTION_DAYS = 30;
 const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 30);
 const MongoStore = MongoStoreModule && MongoStoreModule.default ? MongoStoreModule.default : MongoStoreModule;
+const ADMIN_PERMISSIONS = [
+  { key: "alerts", label: "New Order Alerts" },
+  { key: "dashboard", label: "Dashboard" },
+  { key: "promos", label: "Promo Management" },
+  { key: "products", label: "Product Management" },
+  { key: "stock", label: "Stock Control" },
+  { key: "orders", label: "Orders" },
+  { key: "delivery_assign", label: "Delivery Assignment" },
+  { key: "delivery_agent", label: "Delivery Agent Portal" },
+  { key: "complaints", label: "Customer Complaints" },
+  { key: "administration", label: "Administration" }
+];
+const ADMIN_PERMISSION_KEYS = ADMIN_PERMISSIONS.map((p) => p.key);
+const DELIVERY_ASSIGNMENT_ROLES = new Set(["Inventory Associate", "Operations Manager", "Admin Assistant"]);
 
 const hasCloudinaryConfig = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
@@ -137,29 +153,22 @@ async function persistUpload(file, { folder = "myfarms", localPrefix = "upload" 
   return localName;
 }
 
-const uploadImage = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
-      return cb(new Error("Only png, jpg, jpeg, and webp images are allowed"));
+function createImageUpload() {
+  return multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || "").toLowerCase();
+      if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
+        return cb(new Error("Only png, jpg, jpeg, and webp images are allowed"));
+      }
+      cb(null, true);
     }
-    cb(null, true);
-  }
-});
+  });
+}
 
-const uploadComplaintImage = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
-      return cb(new Error("Only png, jpg, jpeg, and webp images are allowed"));
-    }
-    cb(null, true);
-  }
-});
+const uploadImage = createImageUpload();
+const uploadComplaintImage = createImageUpload();
 
 function requireAuth(req, res, next) {
   if (!req.session.user) {
@@ -173,6 +182,36 @@ function requireAdmin(req, res, next) {
     return res.status(401).json({ error: "Admin authentication required" });
   }
   next();
+}
+
+function hasAdminPermission(admin, permission) {
+  if (!permission) return true;
+  if (admin?.isOwner) return true;
+  return Array.isArray(admin?.permissions) && admin.permissions.includes(permission);
+}
+
+function requireAdminPermission(permission) {
+  return (req, res, next) => {
+    if (!req.session.admin) {
+      return res.status(401).json({ error: "Admin authentication required" });
+    }
+    if (!hasAdminPermission(req.session.admin, permission)) {
+      return res.status(403).json({ error: "You do not have access to this admin feature" });
+    }
+    next();
+  };
+}
+
+function requireAnyAdminPermission(permissions) {
+  return (req, res, next) => {
+    if (!req.session.admin) {
+      return res.status(401).json({ error: "Admin authentication required" });
+    }
+    if (req.session.admin?.isOwner || permissions.some((permission) => hasAdminPermission(req.session.admin, permission))) {
+      return next();
+    }
+    return res.status(403).json({ error: "You do not have access to this admin feature" });
+  };
 }
 
 function runInBackground(task, label) {
@@ -214,6 +253,12 @@ function isAllowedCustomerEmailDomain(email) {
   if (!isValidEmail(normalized)) return false;
   const domain = normalized.split("@")[1] || "";
   return domain === "gmail.com" || domain === "yahoo.com";
+}
+
+function isAllowedEmployeeEmailDomain(email) {
+  const normalized = normalizeEmail(email);
+  if (!isValidEmail(normalized)) return false;
+  return (normalized.split("@")[1] || "") === "gmail.com";
 }
 
 function createEmailVerificationCode() {
@@ -264,6 +309,83 @@ function isValidContactNumber(contactNumber) {
 function isValidMobileNumber(mobileNumber) {
   if (mobileNumber === null || mobileNumber === undefined || String(mobileNumber).trim() === "") return true;
   return /^\d{10}$/.test(String(mobileNumber).trim());
+}
+
+function isValidAadhaarNumber(aadhaarNumber) {
+  return /^\d{12}$/.test(String(aadhaarNumber || "").replace(/\D/g, ""));
+}
+
+function normalizeAadhaarNumber(aadhaarNumber) {
+  return String(aadhaarNumber || "").replace(/\D/g, "");
+}
+
+function hashAadhaarNumber(aadhaarNumber) {
+  const secret = process.env.SESSION_SECRET || "myfarms_dev_secret";
+  return crypto.createHash("sha256").update(`${secret}:${normalizeAadhaarNumber(aadhaarNumber)}`).digest("hex");
+}
+
+function normalizeAdminPermissions(value) {
+  const raw = Array.isArray(value)
+    ? value
+    : String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  return [...new Set(raw.filter((permission) => ADMIN_PERMISSION_KEYS.includes(permission)))];
+}
+
+function canRoleAssignDeliveries(role) {
+  return DELIVERY_ASSIGNMENT_ROLES.has(String(role || "").trim());
+}
+
+function serializeAdministrativeEmployee(employee) {
+  return {
+    id: String(employee._id),
+    name: employee.name,
+    email: employee.email,
+    phoneNumber: employee.phoneNumber,
+    dateOfBirth: employee.dateOfBirth ? employee.dateOfBirth.toISOString().slice(0, 10) : "",
+    role: employee.role,
+    employeePhotoPath: employee.employeePhotoPath || null,
+    aadhaarLast4: employee.aadhaarLast4,
+    permissions: normalizeAdminPermissions(employee.permissions || []),
+    active: employee.active !== false,
+    createdAt: employee.createdAt,
+    updatedAt: employee.updatedAt
+  };
+}
+
+function getAdminActorLabel(admin) {
+  if (!admin) return "Admin";
+  return admin.name || admin.email || "Admin";
+}
+
+function serializeDeliveryEmployee(employee) {
+  if (!employee) return null;
+  return {
+    id: String(employee._id),
+    name: employee.name,
+    email: employee.email,
+    phoneNumber: employee.phoneNumber,
+    role: employee.role,
+    employeePhotoPath: employee.employeePhotoPath || null,
+    active: employee.active !== false
+  };
+}
+
+function serializeOrderDelivery(o) {
+  const employee = o.deliveryEmployeeId && typeof o.deliveryEmployeeId === "object"
+    ? serializeDeliveryEmployee(o.deliveryEmployeeId)
+    : null;
+  return {
+    employee,
+    assignedBy: o.deliveryAssignedBy || null,
+    assignedAt: o.deliveryAssignedAt || null,
+    acceptedAt: o.deliveryAcceptedAt || null,
+    completedAt: o.deliveryCompletedAt || null,
+    canceledAt: o.deliveryCanceledAt || null,
+    cancelNote: o.deliveryCancelNote || null
+  };
 }
 
 function normalizeFreshnessPrediction(prediction) {
@@ -1066,19 +1188,43 @@ app.delete("/api/auth/account", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/admin/login", (req, res) => {
+app.post("/api/admin/login", async (req, res) => {
   const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || "");
 
   const adminEmail = normalizeEmail(process.env.ADMIN_EMAIL || "admin@myfarms.com");
   const adminPassword = String(process.env.ADMIN_PASSWORD || "admin123");
 
-  if (email !== adminEmail || password !== adminPassword) {
+  if (email === adminEmail && password === adminPassword) {
+    req.session.admin = {
+      email: adminEmail,
+      name: "Owner Admin",
+      role: "Owner",
+      isOwner: true,
+      permissions: ADMIN_PERMISSION_KEYS
+    };
+    return res.json({ admin: req.session.admin, permissionsCatalog: ADMIN_PERMISSIONS });
+  }
+
+  const employee = await models.AdministrativeEmployee.findOne({ email });
+  if (!employee || employee.active === false) {
     return res.status(401).json({ error: "Invalid admin credentials" });
   }
 
-  req.session.admin = { email: adminEmail };
-  res.json({ admin: req.session.admin });
+  const valid = await bcrypt.compare(password, employee.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ error: "Invalid admin credentials" });
+  }
+
+  req.session.admin = {
+    id: String(employee._id),
+    email: employee.email,
+    name: employee.name,
+    role: employee.role,
+    isOwner: false,
+    permissions: normalizeAdminPermissions(employee.permissions || [])
+  };
+  return res.json({ admin: req.session.admin, permissionsCatalog: ADMIN_PERMISSIONS });
 });
 
 app.post("/api/admin/logout", (req, res) => {
@@ -1087,7 +1233,204 @@ app.post("/api/admin/logout", (req, res) => {
 });
 
 app.get("/api/admin/me", (req, res) => {
-  res.json({ admin: req.session.admin || null });
+  res.json({ admin: req.session.admin || null, permissionsCatalog: ADMIN_PERMISSIONS });
+});
+
+app.post("/api/admin/change-password", requireAdmin, async (req, res) => {
+  try {
+    if (req.session.admin?.isOwner) {
+      return res.status(400).json({
+        error: "Owner admin password is managed through ADMIN_PASSWORD environment variable"
+      });
+    }
+
+    const currentPassword = String(req.body.currentPassword || "");
+    const newPassword = String(req.body.newPassword || "");
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current password and new password are required" });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must be at least 8 characters" });
+    }
+
+    const employee = await models.AdministrativeEmployee.findById(req.session.admin.id);
+    if (!employee || employee.active === false) {
+      req.session.admin = null;
+      return res.status(401).json({ error: "Admin authentication required" });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, employee.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    employee.passwordHash = await bcrypt.hash(newPassword, 10);
+    await employee.save();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Failed to change admin password:", err.message);
+    res.status(500).json({ error: "Could not update password" });
+  }
+});
+
+app.get("/api/admin/permissions", requireAdmin, (req, res) => {
+  res.json({
+    permissions: ADMIN_PERMISSIONS,
+    admin: req.session.admin
+  });
+});
+
+app.get("/api/admin/employees", requireAdminPermission("administration"), async (_req, res) => {
+  const employees = await models.AdministrativeEmployee.find({}).sort({ createdAt: -1 }).lean();
+  res.json({ employees: employees.map(serializeAdministrativeEmployee), permissions: ADMIN_PERMISSIONS });
+});
+
+app.post("/api/admin/employees", requireAdminPermission("administration"), (req, res) => {
+  uploadImage.single("employeePhoto")(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message || "Employee photo upload failed" });
+    }
+
+    try {
+      const name = String(req.body.name || "").trim();
+      const email = normalizeEmail(req.body.email);
+      const phoneNumber = String(req.body.phoneNumber || "").replace(/\D/g, "");
+      const role = String(req.body.role || "").trim();
+      const aadhaarNumber = normalizeAadhaarNumber(req.body.aadhaarNumber);
+      const password = String(req.body.password || "");
+      const dateOfBirth = new Date(req.body.dateOfBirth);
+      const permissions = normalizeAdminPermissions(req.body.permissionsJson ? JSON.parse(req.body.permissionsJson) : req.body.permissions);
+
+      if (!name || name.length < 2) return res.status(400).json({ error: "Employee name is required" });
+      if (!isAllowedEmployeeEmailDomain(email)) {
+        return res.status(400).json({ error: "Use a valid Gmail address for the employee account" });
+      }
+      if (!isValidContactNumber(phoneNumber)) return res.status(400).json({ error: "Please enter a valid 10-digit phone number" });
+      if (Number.isNaN(dateOfBirth.getTime())) return res.status(400).json({ error: "Valid date of birth is required" });
+      if (!isValidAadhaarNumber(aadhaarNumber)) return res.status(400).json({ error: "Please enter a valid 12-digit Aadhaar number" });
+      if (!role) return res.status(400).json({ error: "Employee role is required" });
+      if (password.length < 8) return res.status(400).json({ error: "Temporary password must be at least 8 characters" });
+      if (!permissions.length) return res.status(400).json({ error: "Select at least one admin feature access" });
+      if (permissions.includes("delivery_assign") && !canRoleAssignDeliveries(role)) {
+        return res.status(400).json({ error: "Only Inventory Associate, Operations Manager, or Admin Assistant can assign deliveries" });
+      }
+      if (!req.file) return res.status(400).json({ error: "Employee photo is required" });
+
+      const exists = await models.AdministrativeEmployee.findOne({ email }).lean();
+      if (exists) return res.status(409).json({ error: "An administrative employee already uses this email" });
+
+      const employeePhotoPath = await persistUpload(req.file, { folder: "myfarms/employees", localPrefix: "employee" });
+      const employee = await models.AdministrativeEmployee.create({
+        name,
+        email,
+        phoneNumber,
+        dateOfBirth,
+        role,
+        employeePhotoPath,
+        aadhaarLast4: aadhaarNumber.slice(-4),
+        aadhaarHash: hashAadhaarNumber(aadhaarNumber),
+        passwordHash: await bcrypt.hash(password, 10),
+        permissions,
+        active: true
+      });
+
+      runInBackground(
+        () =>
+          withTimeout(
+            sendAdministrativeEmployeeWelcomeEmail({
+              toEmail: employee.email,
+              employeeName: employee.name,
+              role: employee.role,
+              temporaryPassword: password
+            }),
+            15000,
+            "Administrative employee welcome email"
+          ),
+        "Employee welcome email failed"
+      );
+
+      return res.status(201).json({ employee: serializeAdministrativeEmployee(employee) });
+    } catch (createErr) {
+      if (createErr instanceof SyntaxError) {
+        return res.status(400).json({ error: "Invalid permissions payload" });
+      }
+      console.error("Failed to create administrative employee:", createErr.message);
+      return res.status(500).json({ error: "Could not create administrative employee" });
+    }
+  });
+});
+
+app.put("/api/admin/employees/:id", requireAdminPermission("administration"), (req, res) => {
+  uploadImage.single("employeePhoto")(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message || "Employee photo upload failed" });
+    }
+
+    try {
+      const employee = await models.AdministrativeEmployee.findById(req.params.id);
+      if (!employee) return res.status(404).json({ error: "Administrative employee not found" });
+
+      const name = String(req.body.name ?? employee.name).trim();
+      const email = normalizeEmail(req.body.email ?? employee.email);
+      const phoneNumber = String(req.body.phoneNumber ?? employee.phoneNumber).replace(/\D/g, "");
+      const role = String(req.body.role ?? employee.role).trim();
+      const dateOfBirth = new Date(req.body.dateOfBirth ?? employee.dateOfBirth);
+      const permissions = normalizeAdminPermissions(req.body.permissionsJson ? JSON.parse(req.body.permissionsJson) : req.body.permissions ?? employee.permissions);
+      const active = req.body.active === undefined ? employee.active !== false : String(req.body.active) === "true";
+      const password = String(req.body.password || "");
+      const aadhaarNumber = normalizeAadhaarNumber(req.body.aadhaarNumber);
+
+      if (!name || name.length < 2) return res.status(400).json({ error: "Employee name is required" });
+      if (!isAllowedEmployeeEmailDomain(email)) {
+        return res.status(400).json({ error: "Use a valid Gmail address for the employee account" });
+      }
+      if (!isValidContactNumber(phoneNumber)) return res.status(400).json({ error: "Please enter a valid 10-digit phone number" });
+      if (Number.isNaN(dateOfBirth.getTime())) return res.status(400).json({ error: "Valid date of birth is required" });
+      if (!role) return res.status(400).json({ error: "Employee role is required" });
+      if (!permissions.length) return res.status(400).json({ error: "Select at least one admin feature access" });
+      if (permissions.includes("delivery_assign") && !canRoleAssignDeliveries(role)) {
+        return res.status(400).json({ error: "Only Inventory Associate, Operations Manager, or Admin Assistant can assign deliveries" });
+      }
+      if (password && password.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+      if (aadhaarNumber && !isValidAadhaarNumber(aadhaarNumber)) {
+        return res.status(400).json({ error: "Please enter a valid 12-digit Aadhaar number" });
+      }
+
+      const duplicate = await models.AdministrativeEmployee.findOne({ email, _id: { $ne: employee._id } }).lean();
+      if (duplicate) return res.status(409).json({ error: "An administrative employee already uses this email" });
+
+      employee.name = name;
+      employee.email = email;
+      employee.phoneNumber = phoneNumber;
+      employee.dateOfBirth = dateOfBirth;
+      employee.role = role;
+      employee.permissions = permissions;
+      employee.active = active;
+      if (password) employee.passwordHash = await bcrypt.hash(password, 10);
+      if (aadhaarNumber) {
+        employee.aadhaarLast4 = aadhaarNumber.slice(-4);
+        employee.aadhaarHash = hashAadhaarNumber(aadhaarNumber);
+      }
+      if (req.file) {
+        employee.employeePhotoPath = await persistUpload(req.file, { folder: "myfarms/employees", localPrefix: "employee" });
+      }
+
+      await employee.save();
+      return res.json({ employee: serializeAdministrativeEmployee(employee) });
+    } catch (updateErr) {
+      if (updateErr instanceof SyntaxError) {
+        return res.status(400).json({ error: "Invalid permissions payload" });
+      }
+      console.error("Failed to update administrative employee:", updateErr.message);
+      return res.status(500).json({ error: "Could not update administrative employee" });
+    }
+  });
+});
+
+app.delete("/api/admin/employees/:id", requireAdminPermission("administration"), async (req, res) => {
+  const result = await models.AdministrativeEmployee.deleteOne({ _id: req.params.id });
+  if (!result.deletedCount) return res.status(404).json({ error: "Administrative employee not found" });
+  res.json({ ok: true });
 });
 
 app.get("/api/wallet", requireAuth, async (req, res) => {
@@ -1120,7 +1463,7 @@ app.get("/api/wallet", requireAuth, async (req, res) => {
   });
 });
 
-app.get("/api/admin/products", requireAdmin, async (_req, res) => {
+app.get("/api/admin/products", requireAnyAdminPermission(["products", "stock"]), async (_req, res) => {
   const products = await models.Product.find({}).sort({ createdAt: -1 }).lean();
   res.json({
     products: products.map((p) => ({
@@ -1147,7 +1490,7 @@ app.get("/api/admin/products", requireAdmin, async (_req, res) => {
   });
 });
 
-app.put("/api/admin/products/:id", requireAdmin, (req, res) => {
+app.put("/api/admin/products/:id", requireAdminPermission("products"), (req, res) => {
   uploadImage.single("image")(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message || "Image upload failed" });
 
@@ -1200,13 +1543,13 @@ app.put("/api/admin/products/:id", requireAdmin, (req, res) => {
   });
 });
 
-app.delete("/api/admin/products/:id", requireAdmin, async (req, res) => {
+app.delete("/api/admin/products/:id", requireAdminPermission("products"), async (req, res) => {
   const result = await models.Product.deleteOne({ _id: req.params.id });
   if (!result.deletedCount) return res.status(404).json({ error: "Product not found" });
   res.json({ ok: true });
 });
 
-app.patch("/api/admin/products/:id/stock-flag", requireAdmin, async (req, res) => {
+app.patch("/api/admin/products/:id/stock-flag", requireAdminPermission("stock"), async (req, res) => {
   const forceOutOfStock = String(req.body.forceOutOfStock) === "true" || req.body.forceOutOfStock === true;
   const restockQuantity = Number(req.body.restockQuantity);
   const variantQuantities = Array.isArray(req.body.variantQuantities) ? req.body.variantQuantities : [];
@@ -1272,7 +1615,7 @@ app.patch("/api/admin/products/:id/stock-flag", requireAdmin, async (req, res) =
   res.json({ ok: true, stock: product.stock, forceOutOfStock: product.forceOutOfStock });
 });
 
-app.post("/api/admin/products/:id/variants", requireAdmin, async (req, res) => {
+app.post("/api/admin/products/:id/variants", requireAdminPermission("products"), async (req, res) => {
   const product = await models.Product.findById(req.params.id);
   if (!product) return res.status(404).json({ error: "Product not found" });
 
@@ -1293,7 +1636,7 @@ app.post("/api/admin/products/:id/variants", requireAdmin, async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
-app.put("/api/admin/products/:id/variants/:variantId", requireAdmin, async (req, res) => {
+app.put("/api/admin/products/:id/variants/:variantId", requireAdminPermission("products"), async (req, res) => {
   const product = await models.Product.findById(req.params.id);
   if (!product) return res.status(404).json({ error: "Product not found" });
 
@@ -1318,7 +1661,7 @@ app.put("/api/admin/products/:id/variants/:variantId", requireAdmin, async (req,
   res.json({ ok: true });
 });
 
-app.delete("/api/admin/products/:id/variants/:variantId", requireAdmin, async (req, res) => {
+app.delete("/api/admin/products/:id/variants/:variantId", requireAdminPermission("products"), async (req, res) => {
   const product = await models.Product.findById(req.params.id);
   if (!product) return res.status(404).json({ error: "Product not found" });
 
@@ -1331,7 +1674,7 @@ app.delete("/api/admin/products/:id/variants/:variantId", requireAdmin, async (r
   res.json({ ok: true });
 });
 
-app.get("/api/admin/promos", requireAdmin, async (_req, res) => {
+app.get("/api/admin/promos", requireAdminPermission("promos"), async (_req, res) => {
   const promos = await models.PromoCode.find({}).sort({ createdAt: -1 }).lean();
   res.json({
     promos: promos.map((p) => ({
@@ -1371,7 +1714,7 @@ app.get("/api/promos/live", async (_req, res) => {
   });
 });
 
-app.post("/api/admin/promos", requireAdmin, async (req, res) => {
+app.post("/api/admin/promos", requireAdminPermission("promos"), async (req, res) => {
   const code = String(req.body.code || "").trim().toUpperCase();
   const discountPercent = Number(req.body.discountPercent);
   const minOrderValue = Number(req.body.minOrderValue || 0);
@@ -1396,7 +1739,7 @@ app.post("/api/admin/promos", requireAdmin, async (req, res) => {
   }
 });
 
-app.patch("/api/admin/promos/:id", requireAdmin, async (req, res) => {
+app.patch("/api/admin/promos/:id", requireAdminPermission("promos"), async (req, res) => {
   const update = {};
   if (req.body.active !== undefined) update.active = Boolean(req.body.active);
   if (req.body.showOnHomepage !== undefined) update.showOnHomepage = Boolean(req.body.showOnHomepage);
@@ -1411,7 +1754,7 @@ app.patch("/api/admin/promos/:id", requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete("/api/admin/promos/:id", requireAdmin, async (req, res) => {
+app.delete("/api/admin/promos/:id", requireAdminPermission("promos"), async (req, res) => {
   const result = await models.PromoCode.deleteOne({ _id: req.params.id });
   if (!result.deletedCount) return res.status(404).json({ error: "Promo not found" });
   res.json({ ok: true });
@@ -1435,7 +1778,7 @@ app.get("/api/promos/validate", async (req, res) => {
   }
 });
 
-app.get("/api/admin/dashboard", requireAdmin, async (req, res) => {
+app.get("/api/admin/dashboard", requireAdminPermission("dashboard"), async (req, res) => {
   const from = parseDateInput(req.query.dateFrom);
   const to = parseDateInput(req.query.dateTo, true);
   const status = String(req.query.status || "").trim();
@@ -1541,7 +1884,7 @@ app.get("/api/products", async (_req, res) => {
   res.json({ products: payload });
 });
 
-app.post("/api/admin/products", requireAdmin, (req, res) => {
+app.post("/api/admin/products", requireAdminPermission("products"), (req, res) => {
   uploadImage.single("image")(req, res, async (err) => {
     if (err) {
       return res.status(400).json({ error: err.message || "Image upload failed" });
@@ -2003,7 +2346,7 @@ app.get("/api/complaints/my", requireAuth, async (req, res) => {
   });
 });
 
-app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
+app.get("/api/admin/orders", requireAnyAdminPermission(["orders", "alerts", "delivery_assign"]), async (_req, res) => {
   await cleanupOldOrders();
   const dateFrom = parseDateInput(_req.query.dateFrom);
   const dateTo = parseDateInput(_req.query.dateTo, true);
@@ -2021,7 +2364,8 @@ app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
 
   let orders = await models.Order.find(query)
     .sort({ createdAt: -1 })
-    .select("customerName customerEmail customerPhone deliveryAddress paymentMethod subtotalAmount discountAmount taxAmount tipAmount totalAmount status cancelNote createdAt items promoCode")
+    .select("customerName customerEmail customerPhone deliveryAddress paymentMethod subtotalAmount discountAmount taxAmount tipAmount totalAmount status cancelNote createdAt items promoCode deliveryEmployeeId deliveryAssignedBy deliveryAssignedAt deliveryAcceptedAt deliveryCompletedAt deliveryCanceledAt deliveryCancelNote")
+    .populate("deliveryEmployeeId", "name email phoneNumber role employeePhotoPath active")
     .lean();
 
   if (category) {
@@ -2048,6 +2392,7 @@ app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
       totalAmount: o.totalAmount,
       status: o.status,
       cancelNote: o.cancelNote || null,
+      delivery: serializeOrderDelivery(o),
       createdAt: o.createdAt,
       items: (o.items || []).map((it) => ({
         productId: String(it.productId),
@@ -2059,7 +2404,184 @@ app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
   });
 });
 
-app.get("/api/admin/complaints", requireAdmin, async (req, res) => {
+app.get("/api/admin/delivery/agents", requireAdminPermission("delivery_assign"), async (_req, res) => {
+  const employees = await models.AdministrativeEmployee.find({
+    active: true,
+    permissions: "delivery_agent"
+  })
+    .sort({ name: 1 })
+    .lean();
+
+  const activeCounts = await models.Order.aggregate([
+    {
+      $match: {
+        deliveryEmployeeId: { $ne: null },
+        status: { $nin: ["DELIVERED", "CANCELED"] }
+      }
+    },
+    { $group: { _id: "$deliveryEmployeeId", activeDeliveries: { $sum: 1 } } }
+  ]);
+  const countMap = new Map(activeCounts.map((item) => [String(item._id), item.activeDeliveries]));
+
+  res.json({
+    agents: employees.map((employee) => ({
+      ...serializeDeliveryEmployee(employee),
+      activeDeliveries: countMap.get(String(employee._id)) || 0
+    }))
+  });
+});
+
+app.post("/api/admin/orders/:id/assign-delivery", requireAdminPermission("delivery_assign"), async (req, res) => {
+  try {
+    const employeeId = String(req.body.employeeId || "").trim();
+    if (!employeeId) return res.status(400).json({ error: "Delivery agent is required" });
+
+    const employee = await models.AdministrativeEmployee.findOne({
+      _id: employeeId,
+      active: true,
+      permissions: "delivery_agent"
+    });
+    if (!employee) return res.status(404).json({ error: "Active delivery agent not found" });
+
+    const order = await models.Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    if (["DELIVERED", "CANCELED"].includes(order.status)) {
+      return res.status(400).json({ error: "Delivered or canceled orders cannot be reassigned" });
+    }
+
+    order.deliveryEmployeeId = employee._id;
+    order.deliveryAssignedBy = getAdminActorLabel(req.session.admin);
+    order.deliveryAssignedAt = new Date();
+    order.deliveryAcceptedAt = null;
+    order.deliveryCanceledAt = null;
+    order.deliveryCancelNote = null;
+    if (order.status === "PLACED") order.status = "ASSIGNED";
+    await order.save();
+
+    runInBackground(
+      () =>
+        withTimeout(
+          sendDeliveryAssignmentEmail({
+            toEmail: employee.email,
+            employeeName: employee.name,
+            orderId: String(order._id),
+            customerName: order.customerName,
+            paymentMethod: order.paymentMethod,
+            deliveryAddress: order.deliveryAddress
+          }),
+          15000,
+          "Delivery assignment email"
+        ),
+      "Delivery assignment email failed"
+    );
+
+    res.json({ ok: true, assignedTo: serializeDeliveryEmployee(employee), status: order.status });
+  } catch (err) {
+    console.error("Failed to assign delivery:", err.message);
+    res.status(500).json({ error: "Could not assign delivery" });
+  }
+});
+
+app.get("/api/admin/deliveries/my", requireAdminPermission("delivery_agent"), async (req, res) => {
+  const orders = await models.Order.find({
+    deliveryEmployeeId: req.session.admin.id,
+    status: { $nin: ["DELIVERED", "CANCELED"] }
+  })
+    .sort({ deliveryAssignedAt: -1, createdAt: -1 })
+    .select("customerName customerEmail customerPhone deliveryAddress paymentMethod totalAmount status cancelNote createdAt items deliveryAssignedBy deliveryAssignedAt deliveryAcceptedAt deliveryCancelNote")
+    .lean();
+
+  res.json({
+    deliveries: orders.map((o) => ({
+      id: String(o._id),
+      customerName: o.customerName,
+      customerEmail: o.customerEmail,
+      customerPhone: o.customerPhone,
+      deliveryAddress: o.deliveryAddress,
+      paymentMethod: o.paymentMethod,
+      totalAmount: o.totalAmount,
+      status: o.status,
+      cancelNote: o.cancelNote || null,
+      deliveryAssignedBy: o.deliveryAssignedBy || null,
+      deliveryAssignedAt: o.deliveryAssignedAt || null,
+      deliveryAcceptedAt: o.deliveryAcceptedAt || null,
+      createdAt: o.createdAt,
+      items: (o.items || []).map((it) => ({
+        productName: it.productName,
+        variantName: it.variantName,
+        quantity: it.quantity
+      }))
+    }))
+  });
+});
+
+app.post("/api/admin/deliveries/:id/accept", requireAdminPermission("delivery_agent"), async (req, res) => {
+  const order = await models.Order.findOne({ _id: req.params.id, deliveryEmployeeId: req.session.admin.id });
+  if (!order) return res.status(404).json({ error: "Assigned delivery not found" });
+  if (["DELIVERED", "CANCELED"].includes(order.status)) {
+    return res.status(400).json({ error: "This delivery is already closed" });
+  }
+
+  order.deliveryAcceptedAt = new Date();
+  if (order.status === "ASSIGNED") order.status = "ACCEPTED_BY_DELIVERY";
+  await order.save();
+  res.json({ ok: true, status: order.status });
+});
+
+app.post("/api/admin/deliveries/:id/status", requireAdminPermission("delivery_agent"), async (req, res) => {
+  try {
+    const allowed = ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELED"];
+    const status = String(req.body.status || "").trim();
+    const cancelNote = String(req.body.cancelNote || "").trim();
+    if (!allowed.includes(status)) return res.status(400).json({ error: "Invalid delivery status" });
+    if (status === "CANCELED" && cancelNote.length < 3) {
+      return res.status(400).json({ error: "Cancel reason is required" });
+    }
+
+    const order = await models.Order.findOne({ _id: req.params.id, deliveryEmployeeId: req.session.admin.id });
+    if (!order) return res.status(404).json({ error: "Assigned delivery not found" });
+    if (!order.deliveryAcceptedAt) return res.status(400).json({ error: "Accept this delivery before updating status" });
+    if (["DELIVERED", "CANCELED"].includes(order.status)) {
+      return res.status(400).json({ error: "This delivery is already closed" });
+    }
+
+    order.status = status;
+    if (status === "DELIVERED") {
+      order.deliveryCompletedAt = new Date();
+      order.cancelNote = null;
+      order.deliveryCancelNote = null;
+    }
+    if (status === "CANCELED") {
+      order.cancelNote = cancelNote;
+      order.deliveryCancelNote = cancelNote;
+      order.deliveryCanceledAt = new Date();
+    }
+    await order.save();
+
+    res.json({ ok: true, status: order.status });
+
+    runInBackground(
+      () =>
+        withTimeout(
+          sendOrderStatusEmail({
+            toEmail: order.customerEmail,
+            customerName: order.customerName,
+            orderId: String(order._id),
+            status,
+            cancelNote: order.cancelNote
+          }),
+          15000,
+          "Delivery status email"
+        ),
+      "Delivery status updated but customer email failed"
+    );
+  } catch (err) {
+    console.error("Failed to update delivery status:", err.message);
+    res.status(500).json({ error: "Could not update delivery status" });
+  }
+});
+
+app.get("/api/admin/complaints", requireAdminPermission("complaints"), async (req, res) => {
   await cleanupOldComplaints();
   const status = String(req.query.status || "").trim().toUpperCase();
   const query = {};
@@ -2090,7 +2612,7 @@ app.get("/api/admin/complaints", requireAdmin, async (req, res) => {
   });
 });
 
-app.post("/api/admin/complaints/:id/reply", requireAdmin, async (req, res) => {
+app.post("/api/admin/complaints/:id/reply", requireAdminPermission("complaints"), async (req, res) => {
   try {
     const replyMessage = String(req.body.replyMessage || "").trim();
     const closeTicket = Boolean(req.body.closeTicket);
@@ -2186,8 +2708,8 @@ async function updateOrderStatusHandler(req, res) {
   }
 }
 
-app.patch("/api/admin/orders/:id/status", requireAdmin, updateOrderStatusHandler);
-app.post("/api/admin/orders/:id/status", requireAdmin, updateOrderStatusHandler);
+app.patch("/api/admin/orders/:id/status", requireAdminPermission("orders"), updateOrderStatusHandler);
+app.post("/api/admin/orders/:id/status", requireAdminPermission("orders"), updateOrderStatusHandler);
 
 app.get("*", (_req, res) => {
   if (fs.existsSync(reactIndexPath)) {

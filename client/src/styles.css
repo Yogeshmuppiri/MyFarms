@@ -718,6 +718,12 @@ body::before {
   filter: blur(var(--hero-blur));
   overflow: hidden;
   will-change: transform;
+  cursor: pointer;
+}
+
+.hero-produce-card:focus-visible {
+  outline: 3px solid rgba(47, 122, 69, 0.42);
+  outline-offset: 5px;
 }
 
 .hero-produce-card::after {

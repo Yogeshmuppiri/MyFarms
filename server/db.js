@@ -73,6 +73,13 @@ const orderSchema = new mongoose.Schema(
     totalAmount: { type: Number, required: true },
     status: { type: String, default: "PLACED" },
     cancelNote: { type: String, default: null },
+    deliveryEmployeeId: { type: mongoose.Schema.Types.ObjectId, ref: "AdministrativeEmployee", default: null },
+    deliveryAssignedBy: { type: String, default: null },
+    deliveryAssignedAt: { type: Date, default: null },
+    deliveryAcceptedAt: { type: Date, default: null },
+    deliveryCompletedAt: { type: Date, default: null },
+    deliveryCanceledAt: { type: Date, default: null },
+    deliveryCancelNote: { type: String, default: null },
     items: [orderItemSchema]
   },
   { timestamps: true }
@@ -121,12 +128,31 @@ const complaintSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const administrativeEmployeeSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    phoneNumber: { type: String, required: true, trim: true },
+    dateOfBirth: { type: Date, required: true },
+    role: { type: String, required: true, trim: true },
+    employeePhotoPath: { type: String, default: null },
+    aadhaarLast4: { type: String, required: true },
+    aadhaarHash: { type: String, required: true },
+    passwordHash: { type: String, required: true },
+    permissions: [{ type: String, required: true }],
+    active: { type: Boolean, default: true }
+  },
+  { timestamps: true }
+);
+
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
 const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
 const PromoCode = mongoose.models.PromoCode || mongoose.model("PromoCode", promoCodeSchema);
 const WalletTransaction = mongoose.models.WalletTransaction || mongoose.model("WalletTransaction", walletTransactionSchema);
 const Complaint = mongoose.models.Complaint || mongoose.model("Complaint", complaintSchema);
+const AdministrativeEmployee =
+  mongoose.models.AdministrativeEmployee || mongoose.model("AdministrativeEmployee", administrativeEmployeeSchema);
 
 async function seedProductsIfNeeded() {
   for (const p of products) {
@@ -185,5 +211,5 @@ async function initDb() {
 
 module.exports = {
   initDb,
-  models: { User, Product, Order, PromoCode, WalletTransaction, Complaint }
+  models: { User, Product, Order, PromoCode, WalletTransaction, Complaint, AdministrativeEmployee }
 };

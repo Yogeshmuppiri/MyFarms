@@ -727,6 +727,104 @@ async function sendEmailVerificationEmail({ toEmail, customerName, verificationC
   });
 }
 
+async function sendAdministrativeEmployeeWelcomeEmail({ toEmail, employeeName, role, temporaryPassword }) {
+  if (!toEmail) return;
+
+  const subject = "Welcome to My Farms Admin";
+  const text = [
+    `Hi ${employeeName || "Team Member"},`,
+    "",
+    "Congratulations. You are now an authorized employee of My Farms.",
+    "",
+    `Role: ${role || "Administrative Employee"}`,
+    `User ID: ${toEmail}`,
+    `Temporary Password: ${temporaryPassword}`,
+    "",
+    "Do not share these credentials with anyone. This information is confidential.",
+    "After logging in, please update your password from the admin portal.",
+    "",
+    "My Farms Team"
+  ].join("\n");
+  const html = makeEmailLayout({
+    heading: "Welcome to My Farms Admin",
+    introHtml: `Congratulations <strong>${escapeHtml(employeeName || "Team Member")}</strong>. You are now an authorized employee of My Farms.`,
+    bodyHtml: `
+      <div style="border:1px solid #e8eedf;border-radius:10px;padding:14px;background:#fcfef9;">
+        <p style="margin:0 0 8px 0;"><strong>Role:</strong> ${escapeHtml(role || "Administrative Employee")}</p>
+        <p style="margin:0 0 8px 0;"><strong>User ID:</strong> ${escapeHtml(toEmail)}</p>
+        <p style="margin:0;"><strong>Temporary Password:</strong> ${escapeHtml(temporaryPassword)}</p>
+      </div>
+      <div style="margin-top:14px;border:1px solid #f0d7b8;border-radius:10px;padding:14px;background:#fff8ef;">
+        <p style="margin:0;color:#4d321b;"><strong>Confidential:</strong> Do not share these credentials with anyone. Update your password after logging in.</p>
+      </div>
+    `,
+    closing: "Thank you for being part of My Farms."
+  });
+
+  if (!hasEmailConfig()) {
+    console.log(`Email provider config missing. Employee welcome email not sent to ${toEmail}.`);
+    console.log(text);
+    return;
+  }
+
+  await sendMailWithProvider({
+    from: getFromAddress(),
+    to: toEmail,
+    subject,
+    text,
+    html,
+    attachments: getLogoAttachment()
+  });
+}
+
+async function sendDeliveryAssignmentEmail({ toEmail, employeeName, orderId, customerName, paymentMethod, deliveryAddress }) {
+  if (!toEmail) return;
+
+  const orderCode = String(orderId || "").slice(-6).toUpperCase();
+  const subject = `New Delivery Assigned #${orderCode}`;
+  const text = [
+    `Hi ${employeeName || "Delivery Team"},`,
+    "",
+    `A new delivery has been assigned to you.`,
+    `Order: #${orderCode}`,
+    `Customer: ${customerName || "Customer"}`,
+    `Payment: ${paymentMethod || "N/A"}`,
+    `Address: ${deliveryAddress || "N/A"}`,
+    "",
+    "Please log in to the My Farms admin portal, open your delivery portal, and accept the delivery.",
+    "",
+    "My Farms Team"
+  ].join("\n");
+  const html = makeEmailLayout({
+    heading: `New Delivery Assigned #${escapeHtml(orderCode)}`,
+    introHtml: `Hi <strong>${escapeHtml(employeeName || "Delivery Team")}</strong>, a new delivery has been assigned to you.`,
+    bodyHtml: `
+      <div style="border:1px solid #e8eedf;border-radius:10px;padding:14px;background:#fcfef9;">
+        <p style="margin:0 0 8px 0;"><strong>Order:</strong> #${escapeHtml(orderCode)}</p>
+        <p style="margin:0 0 8px 0;"><strong>Customer:</strong> ${escapeHtml(customerName || "Customer")}</p>
+        <p style="margin:0 0 8px 0;"><strong>Payment:</strong> ${escapeHtml(paymentMethod || "N/A")}</p>
+        <p style="margin:0;"><strong>Address:</strong> ${escapeHtml(deliveryAddress || "N/A")}</p>
+      </div>
+    `,
+    closing: "Please accept the delivery from your My Farms admin portal."
+  });
+
+  if (!hasEmailConfig()) {
+    console.log(`Email provider config missing. Delivery assignment email not sent to ${toEmail}.`);
+    console.log(text);
+    return;
+  }
+
+  await sendMailWithProvider({
+    from: getFromAddress(),
+    to: toEmail,
+    subject,
+    text,
+    html,
+    attachments: getLogoAttachment()
+  });
+}
+
 module.exports = {
   sendOrderEmail,
   sendCustomerOrderEmail,
@@ -736,5 +834,7 @@ module.exports = {
   sendComplaintClosedEmail,
   sendEmailVerificationEmail,
   sendWelcomeEmail,
+  sendAdministrativeEmployeeWelcomeEmail,
+  sendDeliveryAssignmentEmail,
   hasSmtpConfig
 };

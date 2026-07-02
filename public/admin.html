@@ -29,12 +29,26 @@
       </section>
 
       <section id="panelCard" class="hidden">
-        <section class="card">
+        <section class="card" data-permission="alerts">
           <h2>New Order Alerts</h2>
           <div id="newOrderAlerts" class="stack"></div>
         </section>
 
         <section class="card">
+          <h2>Account Security</h2>
+          <div id="ownerPasswordNote" class="meta hidden">Owner admin password is managed from server environment settings.</div>
+          <form id="adminPasswordForm" class="grid-form">
+            <label>Current Password</label>
+            <input id="adminCurrentPassword" type="password" required />
+            <label>New Password</label>
+            <input id="adminNewPassword" type="password" minlength="8" required />
+            <label>Confirm New Password</label>
+            <input id="adminConfirmPassword" type="password" minlength="8" required />
+            <button type="submit">Update Password</button>
+          </form>
+        </section>
+
+        <section class="card" data-permission="dashboard">
           <h2>Dashboard</h2>
           <form id="dashboardFilterForm" class="grid-form">
             <label>Date From</label>
@@ -71,7 +85,84 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card" data-permission="administration">
+          <h2>Administration</h2>
+          <div class="split">
+            <div>
+              <h3>Add New Administrative</h3>
+              <form id="employeeForm" enctype="multipart/form-data" class="grid-form">
+                <label>Name</label>
+                <input id="employeeName" type="text" required />
+                <label>Valid Gmail Account</label>
+                <input id="employeeEmail" type="email" required placeholder="employee@gmail.com" />
+                <label>Phone Number</label>
+                <input id="employeePhone" type="tel" inputmode="numeric" maxlength="10" required />
+                <label>Date of Birth</label>
+                <input id="employeeDob" type="date" required />
+                <label>Aadhaar Number</label>
+                <input id="employeeAadhaar" type="text" inputmode="numeric" maxlength="12" required />
+                <label>Role</label>
+                <select id="employeeRole" required>
+                  <option value="Delivery Associate">Delivery Associate</option>
+                  <option value="Support Associate">Support Associate</option>
+                  <option value="Inventory Associate">Inventory Associate</option>
+                  <option value="Operations Manager">Operations Manager</option>
+                  <option value="Admin Assistant">Admin Assistant</option>
+                </select>
+                <label>Temporary Password</label>
+                <input id="employeePassword" type="password" minlength="8" required />
+                <label>Employee Photo</label>
+                <input id="employeePhoto" type="file" accept=".png,.jpg,.jpeg,.webp" required />
+                <label>Tool Access</label>
+                <div id="employeePermissions" class="permission-grid"></div>
+                <button type="submit">Create Administrative</button>
+              </form>
+            </div>
+            <div>
+              <h3>Administrative List</h3>
+              <div id="employeeList" class="stack"></div>
+            </div>
+          </div>
+
+          <h3>Manage Administrative</h3>
+          <label>Select Administrative</label>
+          <select id="manageEmployeeSelect"></select>
+          <form id="manageEmployeeForm" enctype="multipart/form-data" class="grid-form">
+            <label>Name</label>
+            <input id="manageEmployeeName" type="text" required />
+            <label>Valid Gmail Account</label>
+            <input id="manageEmployeeEmail" type="email" required />
+            <label>Phone Number</label>
+            <input id="manageEmployeePhone" type="tel" inputmode="numeric" maxlength="10" required />
+            <label>Date of Birth</label>
+            <input id="manageEmployeeDob" type="date" required />
+            <label>Role</label>
+            <select id="manageEmployeeRole" required>
+              <option value="Delivery Associate">Delivery Associate</option>
+              <option value="Support Associate">Support Associate</option>
+              <option value="Inventory Associate">Inventory Associate</option>
+              <option value="Operations Manager">Operations Manager</option>
+              <option value="Admin Assistant">Admin Assistant</option>
+            </select>
+            <label>Status</label>
+            <select id="manageEmployeeActive">
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
+            <label>Update Aadhaar Number (Optional)</label>
+            <input id="manageEmployeeAadhaar" type="text" inputmode="numeric" maxlength="12" placeholder="Leave blank to keep current" />
+            <label>New Password (Optional)</label>
+            <input id="manageEmployeePassword" type="password" minlength="8" placeholder="Leave blank to keep current" />
+            <label>Replace Photo (Optional)</label>
+            <input id="manageEmployeePhoto" type="file" accept=".png,.jpg,.jpeg,.webp" />
+            <label>Tool Access</label>
+            <div id="manageEmployeePermissions" class="permission-grid"></div>
+            <button type="submit">Save Administrative</button>
+            <button id="deleteEmployeeBtn" type="button">Delete Administrative</button>
+          </form>
+        </section>
+
+        <section class="card" data-permission="promos">
           <h2>Promo Management</h2>
           <form id="promoForm" class="grid-form">
             <label>Code</label>
@@ -93,7 +184,7 @@
           <div id="promoList" class="stack"></div>
         </section>
 
-        <section class="card">
+        <section class="card" data-permission="products">
           <h2>Add Product</h2>
           <form id="productForm" enctype="multipart/form-data" class="grid-form">
             <label>Name</label>
@@ -113,7 +204,7 @@
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
-            <label>Signature Product</label>
+            <label>Signature Produce</label>
             <select id="productSignatureShowcase">
               <option value="false">No</option>
               <option value="true">Yes</option>
@@ -126,7 +217,7 @@
           </form>
         </section>
 
-        <section class="card">
+        <section class="card" data-permission="products">
           <h2>Product Management</h2>
           <label>Select Product</label>
           <select id="manageProductSelect"></select>
@@ -148,7 +239,7 @@
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
-            <label>Signature Product</label>
+            <label>Signature Produce</label>
             <select id="manageSignatureShowcase">
               <option value="false">No</option>
               <option value="true">Yes</option>
@@ -166,7 +257,7 @@
           </form>
         </section>
 
-        <section class="card">
+        <section class="card" data-permission="stock">
           <h2>Stock Control</h2>
           <div class="split">
             <div>
@@ -194,7 +285,7 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card" data-permission="orders">
           <h2>Orders</h2>
           <form id="orderFilterForm" class="grid-form">
             <label>Date From</label>
@@ -217,7 +308,33 @@
           <div id="ordersWrap" class="orders"></div>
         </section>
 
-        <section class="card">
+        <section class="card" data-permission="delivery_assign">
+          <h2>Delivery Assignment</h2>
+          <div class="split">
+            <div>
+              <h3>Delivery Agents</h3>
+              <div id="deliveryAgentsList" class="stack"></div>
+            </div>
+            <div>
+              <h3>Assign Order</h3>
+              <form id="deliveryAssignForm" class="grid-form">
+                <label>Order</label>
+                <select id="deliveryOrderSelect"></select>
+                <label>Delivery Agent</label>
+                <select id="deliveryAgentSelect"></select>
+                <button type="submit">Assign Delivery</button>
+              </form>
+              <p class="meta">Inventory Associate, Operations Manager, and Admin Assistant roles can assign deliveries when granted Delivery Assignment access.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card" data-permission="delivery_agent">
+          <h2>My Delivery Portal</h2>
+          <div id="myDeliveriesWrap" class="orders"></div>
+        </section>
+
+        <section class="card" data-permission="complaints">
           <h2>Customer Complaints</h2>
           <form id="complaintFilterForm" class="grid-form">
             <label>Status</label>

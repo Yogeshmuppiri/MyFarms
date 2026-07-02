@@ -5,6 +5,11 @@ const els = {
   adminLoginForm: document.getElementById("adminLoginForm"),
   adminEmail: document.getElementById("adminEmail"),
   adminPassword: document.getElementById("adminPassword"),
+  adminPasswordForm: document.getElementById("adminPasswordForm"),
+  adminCurrentPassword: document.getElementById("adminCurrentPassword"),
+  adminNewPassword: document.getElementById("adminNewPassword"),
+  adminConfirmPassword: document.getElementById("adminConfirmPassword"),
+  ownerPasswordNote: document.getElementById("ownerPasswordNote"),
   dashboardFilterForm: document.getElementById("dashboardFilterForm"),
   dashboardDateFrom: document.getElementById("dashboardDateFrom"),
   dashboardDateTo: document.getElementById("dashboardDateTo"),
@@ -20,9 +25,38 @@ const els = {
   orderStatus: document.getElementById("orderStatus"),
   orderCategory: document.getElementById("orderCategory"),
   newOrderAlerts: document.getElementById("newOrderAlerts"),
+  deliveryAgentsList: document.getElementById("deliveryAgentsList"),
+  deliveryAssignForm: document.getElementById("deliveryAssignForm"),
+  deliveryOrderSelect: document.getElementById("deliveryOrderSelect"),
+  deliveryAgentSelect: document.getElementById("deliveryAgentSelect"),
+  myDeliveriesWrap: document.getElementById("myDeliveriesWrap"),
   complaintFilterForm: document.getElementById("complaintFilterForm"),
   complaintStatus: document.getElementById("complaintStatus"),
   complaintsWrap: document.getElementById("complaintsWrap"),
+  employeeForm: document.getElementById("employeeForm"),
+  employeeName: document.getElementById("employeeName"),
+  employeeEmail: document.getElementById("employeeEmail"),
+  employeePhone: document.getElementById("employeePhone"),
+  employeeDob: document.getElementById("employeeDob"),
+  employeeAadhaar: document.getElementById("employeeAadhaar"),
+  employeeRole: document.getElementById("employeeRole"),
+  employeePassword: document.getElementById("employeePassword"),
+  employeePhoto: document.getElementById("employeePhoto"),
+  employeePermissions: document.getElementById("employeePermissions"),
+  employeeList: document.getElementById("employeeList"),
+  manageEmployeeSelect: document.getElementById("manageEmployeeSelect"),
+  manageEmployeeForm: document.getElementById("manageEmployeeForm"),
+  manageEmployeeName: document.getElementById("manageEmployeeName"),
+  manageEmployeeEmail: document.getElementById("manageEmployeeEmail"),
+  manageEmployeePhone: document.getElementById("manageEmployeePhone"),
+  manageEmployeeDob: document.getElementById("manageEmployeeDob"),
+  manageEmployeeRole: document.getElementById("manageEmployeeRole"),
+  manageEmployeeActive: document.getElementById("manageEmployeeActive"),
+  manageEmployeeAadhaar: document.getElementById("manageEmployeeAadhaar"),
+  manageEmployeePassword: document.getElementById("manageEmployeePassword"),
+  manageEmployeePhoto: document.getElementById("manageEmployeePhoto"),
+  manageEmployeePermissions: document.getElementById("manageEmployeePermissions"),
+  deleteEmployeeBtn: document.getElementById("deleteEmployeeBtn"),
   promoForm: document.getElementById("promoForm"),
   promoCode: document.getElementById("promoCode"),
   promoDiscount: document.getElementById("promoDiscount"),
@@ -69,18 +103,34 @@ const els = {
   toast: document.getElementById("toast")
 };
 
-const API_BASE =
-  window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-    ? "http://localhost:3000"
-    : "";
+const API_BASE = "";
 
 let adminProducts = [];
+let adminEmployees = [];
+let adminOrders = [];
+let deliveryAgents = [];
+let myDeliveries = [];
+let currentAdmin = null;
+let permissionsCatalog = [
+  { key: "alerts", label: "New Order Alerts" },
+  { key: "dashboard", label: "Dashboard" },
+  { key: "promos", label: "Promo Management" },
+  { key: "products", label: "Product Management" },
+  { key: "stock", label: "Stock Control" },
+  { key: "orders", label: "Orders" },
+  { key: "complaints", label: "Customer Complaints" },
+  { key: "administration", label: "Administration" }
+];
 let isAdminLoginSubmitting = false;
+let isAdminPasswordSubmitting = false;
+let isEmployeeSubmitting = false;
+let isManageEmployeeSubmitting = false;
 let isPromoSubmitting = false;
 let isProductSubmitting = false;
 let isManageProductSubmitting = false;
 let isVariantSubmitting = false;
 let isStockFlagSubmitting = false;
+let isDeliveryAssignSubmitting = false;
 let orderPollTimer = null;
 let knownOrderIds = new Set();
 let orderPollInitialized = false;
@@ -96,6 +146,7 @@ async function api(path, options = {}) {
 
     const res = await fetch(`${API_BASE}${path}`, {
       headers,
+      credentials: "same-origin",
       ...options
     });
     const data = await res.json().catch(() => ({}));
@@ -156,6 +207,43 @@ function setButtonLoading(button, loading, loadingText = "Please wait...") {
     button.disabled = false;
     if (button.dataset.originalText) button.innerHTML = button.dataset.originalText;
   }
+}
+
+function hasPermission(permission) {
+  if (!permission) return true;
+  if (currentAdmin && currentAdmin.isOwner) return true;
+  return Boolean(currentAdmin && Array.isArray(currentAdmin.permissions) && currentAdmin.permissions.includes(permission));
+}
+
+function hasAnyPermission(permissions) {
+  return permissions.some((permission) => hasPermission(permission));
+}
+
+function applyPermissionVisibility() {
+  document.querySelectorAll("[data-permission]").forEach((section) => {
+    const permission = section.dataset.permission;
+    section.classList.toggle("hidden", !hasPermission(permission));
+  });
+}
+
+function renderPermissionCheckboxes(container, selectedPermissions = [], prefix = "perm") {
+  if (!container) return;
+  const selected = new Set(selectedPermissions);
+  container.innerHTML = permissionsCatalog
+    .map(
+      (permission) => `
+        <label>
+          <input type="checkbox" value="${permission.key}" id="${prefix}-${permission.key}" ${selected.has(permission.key) ? "checked" : ""} />
+          <span>${permission.label}</span>
+        </label>
+      `
+    )
+    .join("");
+}
+
+function getCheckedPermissions(container) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll("input[type='checkbox']:checked")).map((input) => input.value);
 }
 
 function loadOrderAlerts() {
@@ -267,6 +355,8 @@ function openPanelSectionByContentId(contentId) {
 }
 
 function statusLabel(status) {
+  if (status === "ASSIGNED") return "Assigned";
+  if (status === "ACCEPTED_BY_DELIVERY") return "Accepted by Delivery";
   if (status === "OUT_FOR_DELIVERY") return "Out for Delivery";
   if (status === "ORDER_READY_FOR_PICKUP") return "Order Ready for Pickup";
   if (status === "CANCELED") return "Canceled";
@@ -355,12 +445,16 @@ function setAdminUI(isAdmin) {
   els.loginCard.classList.toggle("hidden", isAdmin);
   els.panelCard.classList.toggle("hidden", !isAdmin);
   if (isAdmin) {
+    applyPermissionVisibility();
+    if (els.adminPasswordForm) els.adminPasswordForm.classList.toggle("hidden", Boolean(currentAdmin?.isOwner));
+    if (els.ownerPasswordNote) els.ownerPasswordNote.classList.toggle("hidden", !currentAdmin?.isOwner);
+    renderPermissionCheckboxes(els.employeePermissions, [], "new-employee-perm");
     setupPanelAccordion();
     loadOrderAlerts();
     renderOrderAlerts();
   }
   els.adminActions.innerHTML = isAdmin
-    ? '<button id="logoutBtn" type="button">Logout</button>'
+    ? `<div class="row"><span class="meta">${currentAdmin?.name || currentAdmin?.email || "Admin"}${currentAdmin?.role ? ` | ${currentAdmin.role}` : ""}</span><button id="logoutBtn" type="button">Logout</button></div>`
     : '<a href="/" style="color:#2f6b3f;text-decoration:none;font-weight:700;">Back to Store</a>';
 
   const logoutBtn = document.getElementById("logoutBtn");
@@ -373,6 +467,7 @@ function setAdminUI(isAdmin) {
       }
       knownOrderIds = new Set();
       orderPollInitialized = false;
+      currentAdmin = null;
       setAdminUI(false);
       toast("Logged out");
     };
@@ -427,6 +522,8 @@ async function renderDashboard() {
 
 async function renderOrders() {
   const data = await api(`/api/admin/orders${buildOrdersQuery()}`);
+  adminOrders = data.orders || [];
+  populateDeliveryAssignmentSelects();
   if (!data.orders.length) {
     els.ordersWrap.innerHTML = '<p class="meta">No orders yet.</p>';
     return;
@@ -444,6 +541,13 @@ async function renderOrders() {
         <div class="meta">Customer: ${o.customerName} | ${o.customerEmail} | ${o.customerPhone}</div>
         <div class="meta">Payment: ${o.paymentMethod} | Total: Rs.${Number(o.totalAmount).toFixed(2)}</div>
         <div class="meta">Address: ${o.deliveryAddress}</div>
+        ${o.delivery && o.delivery.employee ? `
+          <div class="meta">
+            Delivered By / Assigned To:
+            <button type="button" class="link-button" data-delivery-info="${o.id}">${o.delivery.employee.name}</button>
+            ${o.delivery.acceptedAt ? "| Accepted" : "| Waiting for acceptance"}
+          </div>
+        ` : '<div class="meta">Delivered By / Assigned To: Not assigned</div>'}
         <div class="meta">Items: ${o.items
           .map((it) => `${it.productName}${it.variantName ? ` (${it.variantName})` : ""} x ${it.quantity}`)
           .join(", ")}</div>
@@ -479,7 +583,155 @@ async function renderOrders() {
           body: JSON.stringify(payload)
         });
         toast(`Updated: ${statusLabel(btn.dataset.status)}`);
-        await Promise.all([renderOrders(), renderDashboard()]);
+        await Promise.all([refreshOrdersIfAllowed(), refreshDashboardIfAllowed()]);
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        setButtonLoading(btn, false);
+      }
+    };
+  });
+
+  els.ordersWrap.querySelectorAll("button[data-delivery-info]").forEach((btn) => {
+    btn.onclick = () => {
+      const order = adminOrders.find((item) => item.id === btn.dataset.deliveryInfo);
+      const employee = order && order.delivery ? order.delivery.employee : null;
+      if (!employee) return;
+      window.alert([
+        `Name: ${employee.name}`,
+        `Role: ${employee.role}`,
+        `Email: ${employee.email}`,
+        `Phone: ${employee.phoneNumber}`,
+        `Assigned By: ${order.delivery.assignedBy || "N/A"}`,
+        `Assigned At: ${order.delivery.assignedAt ? new Date(order.delivery.assignedAt).toLocaleString() : "N/A"}`,
+        `Accepted At: ${order.delivery.acceptedAt ? new Date(order.delivery.acceptedAt).toLocaleString() : "Not accepted yet"}`,
+        `Completed At: ${order.delivery.completedAt ? new Date(order.delivery.completedAt).toLocaleString() : "Not completed yet"}`
+      ].join("\n"));
+    };
+  });
+}
+
+function populateDeliveryAssignmentSelects() {
+  if (!els.deliveryOrderSelect || !els.deliveryAgentSelect) return;
+
+  const assignableOrders = adminOrders.filter((order) => !["DELIVERED", "CANCELED"].includes(order.status));
+  const previousOrder = els.deliveryOrderSelect.value;
+  const previousAgent = els.deliveryAgentSelect.value;
+
+  els.deliveryOrderSelect.innerHTML = assignableOrders.length
+    ? assignableOrders
+      .map((order) => `<option value="${order.id}">#${order.id.slice(-6).toUpperCase()} | ${order.customerName} | ${statusLabel(order.status)}</option>`)
+      .join("")
+    : '<option value="">No assignable orders</option>';
+
+  els.deliveryAgentSelect.innerHTML = deliveryAgents.length
+    ? deliveryAgents
+      .map((agent) => `<option value="${agent.id}">${agent.name} (${agent.role}) - ${agent.activeDeliveries || 0} active</option>`)
+      .join("")
+    : '<option value="">No delivery agents</option>';
+
+  if (assignableOrders.some((order) => order.id === previousOrder)) els.deliveryOrderSelect.value = previousOrder;
+  if (deliveryAgents.some((agent) => agent.id === previousAgent)) els.deliveryAgentSelect.value = previousAgent;
+}
+
+async function refreshDeliveryAgents() {
+  if (!hasPermission("delivery_assign")) return;
+  const data = await api("/api/admin/delivery/agents");
+  deliveryAgents = data.agents || [];
+  if (els.deliveryAgentsList) {
+    els.deliveryAgentsList.innerHTML = deliveryAgents.length
+      ? deliveryAgents
+        .map(
+          (agent) => `
+          <div class="item">
+            <div class="row" style="justify-content:space-between;">
+              <div class="row">
+                ${agent.employeePhotoPath ? `<img class="employee-photo" src="${resolveAssetUrl(agent.employeePhotoPath)}" alt="${agent.name}" />` : ""}
+                <div>
+                  <strong>${agent.name}</strong>
+                  <div class="meta">${agent.role} | ${agent.email} | ${agent.phoneNumber}</div>
+                  <div class="meta">Active deliveries: ${agent.activeDeliveries || 0}</div>
+                </div>
+              </div>
+              <span class="tag">${agent.active ? "Active" : "Inactive"}</span>
+            </div>
+          </div>
+        `
+        )
+        .join("")
+      : '<div class="meta">No active delivery agents. Grant Delivery Agent Portal access to delivery employees.</div>';
+  }
+  populateDeliveryAssignmentSelects();
+}
+
+async function renderMyDeliveries() {
+  if (!hasPermission("delivery_agent") || !els.myDeliveriesWrap) return;
+  const data = await api("/api/admin/deliveries/my");
+  myDeliveries = data.deliveries || [];
+
+  if (!myDeliveries.length) {
+    els.myDeliveriesWrap.innerHTML = '<p class="meta">No active deliveries assigned to you.</p>';
+    return;
+  }
+
+  els.myDeliveriesWrap.innerHTML = myDeliveries
+    .map(
+      (delivery) => `
+      <article class="order">
+        <div class="row" style="justify-content:space-between;">
+          <strong>Order #${delivery.id.slice(-6).toUpperCase()}</strong>
+          <span class="tag">${statusLabel(delivery.status)}</span>
+        </div>
+        <div class="meta">Assigned By: ${delivery.deliveryAssignedBy || "Admin"} | ${delivery.deliveryAssignedAt ? new Date(delivery.deliveryAssignedAt).toLocaleString() : "N/A"}</div>
+        <div class="meta">Customer: ${delivery.customerName} | ${delivery.customerPhone}</div>
+        <div class="meta">Payment: ${delivery.paymentMethod} | Total: Rs.${Number(delivery.totalAmount || 0).toFixed(2)}</div>
+        <div class="meta">Address: ${delivery.deliveryAddress}</div>
+        <div class="meta">Items: ${(delivery.items || [])
+          .map((item) => `${item.productName}${item.variantName ? ` (${item.variantName})` : ""} x ${item.quantity}`)
+          .join(", ")}</div>
+        <div class="row" style="margin-top:0.5rem;">
+          ${delivery.deliveryAcceptedAt ? "" : `<button type="button" data-action="accept-delivery" data-id="${delivery.id}">Accept Delivery</button>`}
+          ${delivery.deliveryAcceptedAt ? `
+            <button type="button" data-action="delivery-out" data-id="${delivery.id}">Out for Delivery</button>
+            <button type="button" data-action="delivery-cancel" data-id="${delivery.id}">Cancel Delivery</button>
+            <button type="button" data-action="delivery-delivered" data-id="${delivery.id}">Delivered</button>
+          ` : ""}
+        </div>
+      </article>
+    `
+    )
+    .join("");
+
+  els.myDeliveriesWrap.querySelectorAll("button[data-action]").forEach((btn) => {
+    btn.onclick = async () => {
+      setButtonLoading(btn, true, "Updating...");
+      try {
+        if (btn.dataset.action === "accept-delivery") {
+          await api(`/api/admin/deliveries/${btn.dataset.id}/accept`, { method: "POST" });
+          toast("Delivery accepted");
+        } else {
+          const status =
+            btn.dataset.action === "delivery-out"
+              ? "OUT_FOR_DELIVERY"
+              : btn.dataset.action === "delivery-delivered"
+                ? "DELIVERED"
+                : "CANCELED";
+          const payload = { status };
+          if (status === "CANCELED") {
+            const note = window.prompt("Enter cancellation reason for customer notification:");
+            if (!note || note.trim().length < 3) {
+              toast("Cancel reason is required");
+              return;
+            }
+            payload.cancelNote = note.trim();
+          }
+          await api(`/api/admin/deliveries/${btn.dataset.id}/status`, {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          toast(`Delivery updated: ${statusLabel(status)}`);
+        }
+        await Promise.all([renderMyDeliveries(), refreshOrdersIfAllowed(), refreshDeliveryAgents()]);
       } catch (err) {
         toast(err.message);
       } finally {
@@ -490,6 +742,7 @@ async function renderOrders() {
 }
 
 function startOrderPolling() {
+  if (!hasAnyPermission(["orders", "alerts"])) return;
   if (orderPollTimer) clearInterval(orderPollTimer);
 
   const poll = async () => {
@@ -518,7 +771,7 @@ function startOrderPolling() {
             Notification.requestPermission();
           }
         }
-        await Promise.all([renderOrders(), renderDashboard()]);
+        await Promise.all([refreshOrdersIfAllowed(), refreshDashboardIfAllowed()]);
       }
     } catch {
       // Ignore polling errors
@@ -750,7 +1003,7 @@ function renderSelectedProduct() {
           body: JSON.stringify({ name, price, stock })
         });
         toast("Variant updated");
-        await Promise.all([refreshProducts(), renderDashboard()]);
+        await Promise.all([refreshProducts(), refreshDashboardIfAllowed()]);
       } catch (err) {
         toast(err.message);
       } finally {
@@ -807,6 +1060,81 @@ function renderOutOfStockList() {
     .join("");
 }
 
+function getSelectedEmployee() {
+  const id = els.manageEmployeeSelect.value;
+  return adminEmployees.find((employee) => employee.id === id) || null;
+}
+
+function populateEmployeeSelect() {
+  if (!els.manageEmployeeSelect) return;
+  const previous = els.manageEmployeeSelect.value;
+  els.manageEmployeeSelect.innerHTML = adminEmployees
+    .map((employee) => `<option value="${employee.id}">${employee.name} (${employee.role})</option>`)
+    .join("");
+  if (!adminEmployees.length) return;
+  els.manageEmployeeSelect.value = adminEmployees.some((employee) => employee.id === previous)
+    ? previous
+    : adminEmployees[0].id;
+}
+
+function renderSelectedEmployee() {
+  const employee = getSelectedEmployee();
+  if (!employee || !els.manageEmployeeForm) return;
+
+  els.manageEmployeeName.value = employee.name || "";
+  els.manageEmployeeEmail.value = employee.email || "";
+  els.manageEmployeePhone.value = employee.phoneNumber || "";
+  els.manageEmployeeDob.value = employee.dateOfBirth || "";
+  els.manageEmployeeRole.value = employee.role || "Delivery Associate";
+  els.manageEmployeeActive.value = String(employee.active !== false);
+  els.manageEmployeeAadhaar.value = "";
+  els.manageEmployeeAadhaar.placeholder = employee.aadhaarLast4 ? `Current Aadhaar ends with ${employee.aadhaarLast4}` : "Leave blank to keep current";
+  els.manageEmployeePassword.value = "";
+  els.manageEmployeePhoto.value = "";
+  renderPermissionCheckboxes(els.manageEmployeePermissions, employee.permissions || [], "manage-employee-perm");
+}
+
+function renderEmployees() {
+  if (!els.employeeList) return;
+  if (!adminEmployees.length) {
+    els.employeeList.innerHTML = '<div class="meta">No administrative employees yet.</div>';
+    if (els.manageEmployeeSelect) els.manageEmployeeSelect.innerHTML = "";
+    return;
+  }
+
+  els.employeeList.innerHTML = adminEmployees
+    .map(
+      (employee) => `
+      <div class="item">
+        <div class="row" style="justify-content:space-between;">
+          <div class="row">
+            ${employee.employeePhotoPath ? `<img class="employee-photo" src="${resolveAssetUrl(employee.employeePhotoPath)}" alt="${employee.name}" />` : ""}
+            <div>
+              <strong>${employee.name}</strong>
+              <div class="meta">${employee.role} | ${employee.email} | ${employee.phoneNumber}</div>
+              <div class="meta">Aadhaar: **** **** ${employee.aadhaarLast4 || "----"} | ${employee.active ? "Active" : "Inactive"}</div>
+              <div class="meta">Access: ${(employee.permissions || []).join(", ") || "None"}</div>
+            </div>
+          </div>
+          <span class="tag">${employee.active ? "Active" : "Inactive"}</span>
+        </div>
+      </div>
+    `
+    )
+    .join("");
+}
+
+async function refreshEmployees() {
+  if (!hasPermission("administration")) return;
+  const data = await api("/api/admin/employees");
+  adminEmployees = data.employees || [];
+  permissionsCatalog = data.permissions || permissionsCatalog;
+  renderPermissionCheckboxes(els.employeePermissions, [], "new-employee-perm");
+  populateEmployeeSelect();
+  renderEmployees();
+  renderSelectedEmployee();
+}
+
 async function refreshProducts() {
   const data = await api("/api/admin/products");
   adminProducts = data.products || [];
@@ -817,7 +1145,24 @@ async function refreshProducts() {
 }
 
 async function refreshAll() {
-  await Promise.all([renderDashboard(), renderOrders(), renderPromos(), refreshProducts(), renderComplaints()]);
+  const tasks = [];
+  if (hasPermission("dashboard")) tasks.push(renderDashboard());
+  if (hasAnyPermission(["orders", "alerts", "delivery_assign"])) tasks.push(renderOrders());
+  if (hasPermission("delivery_assign")) tasks.push(refreshDeliveryAgents());
+  if (hasPermission("delivery_agent")) tasks.push(renderMyDeliveries());
+  if (hasPermission("promos")) tasks.push(renderPromos());
+  if (hasAnyPermission(["products", "stock"])) tasks.push(refreshProducts());
+  if (hasPermission("complaints")) tasks.push(renderComplaints());
+  if (hasPermission("administration")) tasks.push(refreshEmployees());
+  await Promise.all(tasks);
+}
+
+function refreshDashboardIfAllowed() {
+  return hasPermission("dashboard") ? renderDashboard() : Promise.resolve();
+}
+
+function refreshOrdersIfAllowed() {
+  return hasAnyPermission(["orders", "alerts", "delivery_assign"]) ? renderOrders() : Promise.resolve();
 }
 
 els.dashboardFilterForm.onsubmit = async (e) => {
@@ -830,10 +1175,170 @@ els.orderFilterForm.onsubmit = async (e) => {
   await renderOrders();
 };
 
+if (els.deliveryAssignForm) {
+  els.deliveryAssignForm.onsubmit = async (e) => {
+    e.preventDefault();
+    if (isDeliveryAssignSubmitting) return;
+    const orderId = els.deliveryOrderSelect.value;
+    const employeeId = els.deliveryAgentSelect.value;
+    if (!orderId || !employeeId) {
+      toast("Select an order and delivery agent");
+      return;
+    }
+
+    isDeliveryAssignSubmitting = true;
+    const submitBtn = e.submitter || els.deliveryAssignForm.querySelector("button[type='submit']");
+    setButtonLoading(submitBtn, true, "Assigning...");
+    try {
+      await api(`/api/admin/orders/${orderId}/assign-delivery`, {
+        method: "POST",
+        body: JSON.stringify({ employeeId })
+      });
+      toast("Delivery assigned and agent notified");
+      await Promise.all([renderOrders(), refreshDeliveryAgents()]);
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      setButtonLoading(submitBtn, false);
+      isDeliveryAssignSubmitting = false;
+    }
+  };
+}
+
 els.complaintFilterForm.onsubmit = async (e) => {
   e.preventDefault();
   await renderComplaints();
 };
+
+if (els.adminPasswordForm) {
+  els.adminPasswordForm.onsubmit = async (e) => {
+    e.preventDefault();
+    if (isAdminPasswordSubmitting) return;
+    if (els.adminNewPassword.value !== els.adminConfirmPassword.value) {
+      toast("New passwords do not match");
+      return;
+    }
+
+    isAdminPasswordSubmitting = true;
+    const submitBtn = e.submitter || els.adminPasswordForm.querySelector("button[type='submit']");
+    setButtonLoading(submitBtn, true, "Updating...");
+    try {
+      await api("/api/admin/change-password", {
+        method: "POST",
+        body: JSON.stringify({
+          currentPassword: els.adminCurrentPassword.value,
+          newPassword: els.adminNewPassword.value
+        })
+      });
+      els.adminPasswordForm.reset();
+      toast("Password updated. Use the new password for your next login.");
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      setButtonLoading(submitBtn, false);
+      isAdminPasswordSubmitting = false;
+    }
+  };
+}
+
+if (els.manageEmployeeSelect) {
+  els.manageEmployeeSelect.onchange = renderSelectedEmployee;
+}
+
+if (els.employeeForm) {
+  els.employeeForm.onsubmit = async (e) => {
+    e.preventDefault();
+    if (isEmployeeSubmitting) return;
+    isEmployeeSubmitting = true;
+    const submitBtn = e.submitter || els.employeeForm.querySelector("button[type='submit']");
+    setButtonLoading(submitBtn, true, "Creating...");
+    try {
+      const permissions = getCheckedPermissions(els.employeePermissions);
+      if (!permissions.length) {
+        toast("Select at least one tool access");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("name", els.employeeName.value.trim());
+      formData.append("email", els.employeeEmail.value.trim());
+      formData.append("phoneNumber", els.employeePhone.value.trim());
+      formData.append("dateOfBirth", els.employeeDob.value);
+      formData.append("aadhaarNumber", els.employeeAadhaar.value.trim());
+      formData.append("role", els.employeeRole.value);
+      formData.append("password", els.employeePassword.value);
+      formData.append("permissionsJson", JSON.stringify(permissions));
+      const photo = els.employeePhoto.files && els.employeePhoto.files[0];
+      if (!photo) throw new Error("Employee photo is required");
+      formData.append("employeePhoto", photo);
+
+      await api("/api/admin/employees", { method: "POST", body: formData });
+      els.employeeForm.reset();
+      els.employeeRole.value = "Delivery Associate";
+      renderPermissionCheckboxes(els.employeePermissions, [], "new-employee-perm");
+      toast("Administrative account created");
+      await refreshEmployees();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      setButtonLoading(submitBtn, false);
+      isEmployeeSubmitting = false;
+    }
+  };
+}
+
+if (els.manageEmployeeForm) {
+  els.manageEmployeeForm.onsubmit = async (e) => {
+    e.preventDefault();
+    if (isManageEmployeeSubmitting) return;
+    isManageEmployeeSubmitting = true;
+    const submitBtn = e.submitter || els.manageEmployeeForm.querySelector("button[type='submit']");
+    setButtonLoading(submitBtn, true, "Saving...");
+    try {
+      const employee = getSelectedEmployee();
+      if (!employee) return;
+      const permissions = getCheckedPermissions(els.manageEmployeePermissions);
+      if (!permissions.length) {
+        toast("Select at least one tool access");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("name", els.manageEmployeeName.value.trim());
+      formData.append("email", els.manageEmployeeEmail.value.trim());
+      formData.append("phoneNumber", els.manageEmployeePhone.value.trim());
+      formData.append("dateOfBirth", els.manageEmployeeDob.value);
+      formData.append("role", els.manageEmployeeRole.value);
+      formData.append("active", els.manageEmployeeActive.value);
+      formData.append("permissionsJson", JSON.stringify(permissions));
+      if (els.manageEmployeeAadhaar.value.trim()) formData.append("aadhaarNumber", els.manageEmployeeAadhaar.value.trim());
+      if (els.manageEmployeePassword.value) formData.append("password", els.manageEmployeePassword.value);
+      const photo = els.manageEmployeePhoto.files && els.manageEmployeePhoto.files[0];
+      if (photo) formData.append("employeePhoto", photo);
+
+      await api(`/api/admin/employees/${employee.id}`, { method: "PUT", body: formData });
+      toast("Administrative account updated");
+      await refreshEmployees();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      setButtonLoading(submitBtn, false);
+      isManageEmployeeSubmitting = false;
+    }
+  };
+}
+
+if (els.deleteEmployeeBtn) {
+  els.deleteEmployeeBtn.onclick = async () => {
+    const employee = getSelectedEmployee();
+    if (!employee) return;
+    const confirmed = window.confirm(`Delete administrative account for ${employee.name}?`);
+    if (!confirmed) return;
+    await api(`/api/admin/employees/${employee.id}`, { method: "DELETE" });
+    toast("Administrative account deleted");
+    await refreshEmployees();
+  };
+}
 
 els.promoForm.onsubmit = async (e) => {
   e.preventDefault();
@@ -892,7 +1397,7 @@ els.productForm.onsubmit = async (e) => {
     els.productFeatured.value = "false";
     els.productSignatureShowcase.value = "false";
     toast("Product added");
-    await Promise.all([refreshProducts(), renderDashboard()]);
+    await Promise.all([refreshProducts(), refreshDashboardIfAllowed()]);
   } catch (err) {
     toast(err.message);
   } finally {
@@ -923,7 +1428,7 @@ els.manageProductForm.onsubmit = async (e) => {
     formData.append("signatureShowcase", els.manageSignatureShowcase.value);
     await api(`/api/admin/products/${p.id}`, { method: "PUT", body: formData });
     toast("Product updated");
-    await Promise.all([refreshProducts(), renderDashboard()]);
+    await Promise.all([refreshProducts(), refreshDashboardIfAllowed()]);
   } catch (err) {
     toast(err.message);
   } finally {
@@ -937,7 +1442,7 @@ els.deleteProductBtn.onclick = async () => {
   if (!p) return;
   await api(`/api/admin/products/${p.id}`, { method: "DELETE" });
   toast("Product deleted");
-  await Promise.all([refreshProducts(), renderDashboard()]);
+  await Promise.all([refreshProducts(), refreshDashboardIfAllowed()]);
 };
 
 els.variantForm.onsubmit = async (e) => {
@@ -960,7 +1465,7 @@ els.variantForm.onsubmit = async (e) => {
     els.variantForm.reset();
     els.variantStock.value = "0";
     toast("Variant added");
-    await Promise.all([refreshProducts(), renderDashboard()]);
+    await Promise.all([refreshProducts(), refreshDashboardIfAllowed()]);
   } catch (err) {
     toast(err.message);
   } finally {
@@ -1039,10 +1544,12 @@ els.adminLoginForm.onsubmit = async (e) => {
   const submitBtn = e.submitter || els.adminLoginForm.querySelector("button[type='submit']");
   setButtonLoading(submitBtn, true, "Logging in...");
   try {
-    await api("/api/admin/login", {
+    const data = await api("/api/admin/login", {
       method: "POST",
       body: JSON.stringify({ email: els.adminEmail.value, password: els.adminPassword.value })
     });
+    currentAdmin = data.admin || null;
+    permissionsCatalog = data.permissionsCatalog || permissionsCatalog;
     setAdminUI(true);
     await refreshAll();
     orderPollInitialized = false;
@@ -1060,6 +1567,8 @@ els.adminLoginForm.onsubmit = async (e) => {
 (async function init() {
   try {
     const data = await api("/api/admin/me");
+    currentAdmin = data.admin || null;
+    permissionsCatalog = data.permissionsCatalog || permissionsCatalog;
     const isAdmin = Boolean(data.admin);
     setAdminUI(isAdmin);
     if (isAdmin) {

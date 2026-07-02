@@ -121,6 +121,28 @@ form {
   margin: 0;
 }
 
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.45rem;
+}
+
+.permission-grid label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #d8e6d3;
+  border-radius: 8px;
+  background: #f9fcf8;
+  padding: 0.5rem;
+  font-weight: 700;
+}
+
+.permission-grid input {
+  width: auto;
+  margin: 0;
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: 1fr 110px 110px auto;
@@ -148,6 +170,15 @@ button {
 
 button:hover {
   filter: brightness(1.03);
+}
+
+.link-button {
+  border: 0;
+  background: transparent;
+  color: #246136;
+  padding: 0;
+  font-weight: 800;
+  text-decoration: underline;
 }
 
 .orders,
@@ -213,6 +244,15 @@ button:hover {
   min-width: min(92vw, 420px);
   max-width: min(92vw, 720px);
   pointer-events: auto;
+}
+
+.employee-photo {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid #d8e6d3;
+  background: #eef5ea;
 }
 
 .toast-success {
