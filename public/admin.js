@@ -100,11 +100,20 @@ const els = {
   stockVariantWrap: document.getElementById("stockVariantWrap"),
   stockVariantList: document.getElementById("stockVariantList"),
   outOfStockList: document.getElementById("outOfStockList"),
+  inventoryAlertForm: document.getElementById("inventoryAlertForm"),
+  inventoryAlertThreshold: document.getElementById("inventoryAlertThreshold"),
+  inventoryAlertsWrap: document.getElementById("inventoryAlertsWrap"),
   ordersWrap: document.getElementById("ordersWrap"),
+  deliverySupervisorKpis: document.getElementById("deliverySupervisorKpis"),
+  supervisorAgentsWrap: document.getElementById("supervisorAgentsWrap"),
+  supervisorUnassignedWrap: document.getElementById("supervisorUnassignedWrap"),
+  supervisorPendingWrap: document.getElementById("supervisorPendingWrap"),
+  supervisorCanceledWrap: document.getElementById("supervisorCanceledWrap"),
   toast: document.getElementById("toast")
 };
 
 const API_BASE = "";
+const adminConfig = window.MyFarmsAdminConfig || {};
 
 let adminProducts = [];
 let adminEmployees = [];
@@ -112,16 +121,7 @@ let adminOrders = [];
 let deliveryAgents = [];
 let myDeliveries = [];
 let currentAdmin = null;
-let permissionsCatalog = [
-  { key: "alerts", label: "New Order Alerts" },
-  { key: "dashboard", label: "Dashboard" },
-  { key: "promos", label: "Promo Management" },
-  { key: "products", label: "Product Management" },
-  { key: "stock", label: "Stock Control" },
-  { key: "orders", label: "Orders" },
-  { key: "complaints", label: "Customer Complaints" },
-  { key: "administration", label: "Administration" }
-];
+let permissionsCatalog = adminConfig.permissions || [];
 let isAdminLoginSubmitting = false;
 let isAdminPasswordSubmitting = false;
 let isEmployeeSubmitting = false;
@@ -240,10 +240,11 @@ function applyPermissionVisibility() {
 }
 
 function availablePermissionsForRole(role) {
-  const selectedRole = String(role || "").trim();
   return permissionsCatalog.filter((permission) => {
-    if (permission.key !== "delivery_agent") return true;
-    return selectedRole === "Delivery Associate";
+    if (typeof adminConfig.isPermissionAllowedForRole === "function") {
+      return adminConfig.isPermissionAllowedForRole(permission.key, role);
+    }
+    return true;
   });
 }
 
@@ -837,7 +838,7 @@ async function renderMyDeliveries() {
           });
           toast(`Delivery updated: ${statusLabel(status)}`);
         }
-        await Promise.all([renderMyDeliveries(), refreshOrdersIfAllowed(), refreshDeliveryAgents()]);
+        await Promise.all([renderMyDeliveries(), refreshOrdersIfAllowed(), refreshDeliveryAgents(), renderDeliverySupervisorDashboard()]);
       } catch (err) {
         toast(err.message);
       } finally {
@@ -1166,6 +1167,122 @@ function renderOutOfStockList() {
     .join("");
 }
 
+async function renderInventoryAlerts() {
+  if (!hasPermission("inventory_alerts") || !els.inventoryAlertsWrap) return;
+  const threshold = Math.max(0, Number.parseInt(String(els.inventoryAlertThreshold?.value || "5"), 10) || 0);
+  const data = await api(`/api/admin/inventory-alerts?threshold=${encodeURIComponent(threshold)}`);
+  const alerts = data.alerts || [];
+  if (!alerts.length) {
+    els.inventoryAlertsWrap.innerHTML = '<p class="meta">No inventory alerts for the selected threshold.</p>';
+    return;
+  }
+
+  els.inventoryAlertsWrap.innerHTML = alerts
+    .map(
+      (alert) => `
+        <article class="order">
+          <div class="row" style="justify-content:space-between;">
+            <strong>${alert.productName}${alert.variantName ? ` (${alert.variantName})` : ""}</strong>
+            <span class="tag">${alert.reason}</span>
+          </div>
+          <div class="meta">${alert.category} | Stock: ${alert.stock} ${alert.unit || ""} | Threshold: ${alert.threshold}</div>
+        </article>
+      `
+    )
+    .join("");
+}
+
+async function renderDeliverySupervisorDashboard() {
+  if (!hasPermission("delivery_supervisor")) return;
+  const data = await api("/api/admin/delivery/supervisor");
+  const kpis = data.kpis || {};
+  if (els.deliverySupervisorKpis) {
+    els.deliverySupervisorKpis.innerHTML = `
+      <div class="kpi"><div class="meta">Unassigned</div><strong>${kpis.unassigned || 0}</strong></div>
+      <div class="kpi"><div class="meta">Active Deliveries</div><strong>${kpis.activeDeliveries || 0}</strong></div>
+      <div class="kpi"><div class="meta">Late Deliveries</div><strong>${kpis.lateDeliveries || 0}</strong></div>
+      <div class="kpi"><div class="meta">Delivered Today</div><strong>${kpis.deliveredToday || 0}</strong></div>
+    `;
+  }
+
+  if (els.supervisorAgentsWrap) {
+    const agents = data.agents || [];
+    els.supervisorAgentsWrap.innerHTML = agents.length
+      ? agents
+        .map(
+          (agent) => `
+            <div class="item">
+              <div class="delivery-agent-card">
+                ${agent.employeePhotoPath ? `<img class="employee-photo" src="${resolveAssetUrl(agent.employeePhotoPath)}" alt="${agent.name}" />` : ""}
+                <div>
+                  <strong>${agent.name}</strong>
+                  <div class="meta">${agent.phoneNumber}</div>
+                  <div class="meta">Active: ${agent.activeDeliveries || 0} | Waiting: ${agent.waitingAcceptance || 0}</div>
+                  <div class="meta">Out: ${agent.outForDelivery || 0} | Late: ${agent.lateDeliveries || 0} | Delivered Today: ${agent.deliveredToday || 0}</div>
+                </div>
+              </div>
+            </div>
+          `
+        )
+        .join("")
+      : '<div class="meta">No active delivery agents.</div>';
+  }
+
+  if (els.supervisorUnassignedWrap) {
+    const unassigned = data.unassigned || [];
+    els.supervisorUnassignedWrap.innerHTML = unassigned.length
+      ? unassigned
+        .map(
+          (order) => `
+            <article class="item compact-order">
+              <strong>#${order.id.slice(-6).toUpperCase()} | ${order.customerName}</strong>
+              <div class="meta">${order.customerPhone} | ${statusLabel(order.status)} | Rs.${Number(order.totalAmount || 0).toFixed(2)}</div>
+              <div class="meta">${order.deliveryAddress}</div>
+            </article>
+          `
+        )
+        .join("")
+      : '<div class="meta">No unassigned deliveries.</div>';
+  }
+
+  if (els.supervisorPendingWrap) {
+    const pending = data.pending || [];
+    els.supervisorPendingWrap.innerHTML = pending.length
+      ? pending
+        .map(
+          (order) => `
+            <article class="item compact-order">
+              <div class="row" style="justify-content:space-between;">
+                <strong>#${order.id.slice(-6).toUpperCase()} | ${order.customerName}</strong>
+                <span class="tag">${order.isLate ? "Late" : statusLabel(order.status)}</span>
+              </div>
+              <div class="meta">Agent: ${order.agent?.name || "N/A"} | ${order.agent?.phoneNumber || "N/A"}</div>
+              <div class="meta">Assigned: ${order.assignedAt ? new Date(order.assignedAt).toLocaleString() : "N/A"} | Accepted: ${order.acceptedAt ? new Date(order.acceptedAt).toLocaleString() : "No"}</div>
+            </article>
+          `
+        )
+        .join("")
+      : '<div class="meta">No pending assigned deliveries.</div>';
+  }
+
+  if (els.supervisorCanceledWrap) {
+    const canceled = data.canceledRecent || [];
+    els.supervisorCanceledWrap.innerHTML = canceled.length
+      ? canceled
+        .map(
+          (order) => `
+            <article class="item compact-order">
+              <strong>#${order.id.slice(-6).toUpperCase()} | ${order.customerName}</strong>
+              <div class="meta">Agent: ${order.agent?.name || "N/A"} | ${order.canceledAt ? new Date(order.canceledAt).toLocaleString() : "N/A"}</div>
+              <div class="meta">Reason: ${order.cancelNote}</div>
+            </article>
+          `
+        )
+        .join("")
+      : '<div class="meta">No recent canceled delivery records.</div>';
+  }
+}
+
 function getSelectedEmployee() {
   const id = els.manageEmployeeSelect.value;
   return adminEmployees.find((employee) => employee.id === id) || null;
@@ -1254,8 +1371,10 @@ async function refreshAll() {
   const tasks = [];
   if (hasPermission("alerts")) tasks.push(refreshNewOrderAlerts());
   if (hasPermission("dashboard")) tasks.push(renderDashboard());
+  if (hasPermission("inventory_alerts")) tasks.push(renderInventoryAlerts());
   if (hasAnyPermission(["orders", "alerts", "delivery_assign"])) tasks.push(renderOrders());
   if (hasPermission("delivery_assign")) tasks.push(refreshDeliveryAgents());
+  if (hasPermission("delivery_supervisor")) tasks.push(renderDeliverySupervisorDashboard());
   if (hasPermission("delivery_agent")) tasks.push(renderMyDeliveries());
   if (hasPermission("promos")) tasks.push(renderPromos());
   if (hasAnyPermission(["products", "stock"])) tasks.push(refreshProducts());
@@ -1270,6 +1389,13 @@ function refreshDashboardIfAllowed() {
 
 function refreshOrdersIfAllowed() {
   return hasAnyPermission(["orders", "alerts", "delivery_assign"]) ? renderOrders() : Promise.resolve();
+}
+
+if (els.inventoryAlertForm) {
+  els.inventoryAlertForm.onsubmit = async (e) => {
+    e.preventDefault();
+    await renderInventoryAlerts();
+  };
 }
 
 els.dashboardFilterForm.onsubmit = async (e) => {
@@ -1302,7 +1428,7 @@ if (els.deliveryAssignForm) {
         body: JSON.stringify({ employeeId })
       });
       toast("Delivery assigned and agent notified");
-      await Promise.all([renderOrders(), refreshDeliveryAgents(), refreshNewOrderAlerts()]);
+      await Promise.all([renderOrders(), refreshDeliveryAgents(), refreshNewOrderAlerts(), renderDeliverySupervisorDashboard()]);
     } catch (err) {
       toast(err.message);
     } finally {

@@ -2126,7 +2126,7 @@ export default function App() {
         </div>
         <nav className="topnav">
           <div className="brand">
-            <img src="/myfarmslogo.png" alt="My Farms logo" className="brand-logo" />
+            <img src="/assets/images/myfarmslogo.png" alt="My Farms logo" className="brand-logo" />
           </div>
           <div className="nav-actions" id="navActions">
             {user ? (
@@ -2609,7 +2609,7 @@ export default function App() {
       </main>
 
       <footer className="brand-footer">
-        <img src="/myfarmslogo.png" alt="My Farms logo" />
+        <img src="/assets/images/myfarmslogo.png" alt="My Farms logo" />
         <div>
           <strong>My Farms</strong>
           <span>Fresh essentials, direct from local farms.</span>

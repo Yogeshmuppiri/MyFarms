@@ -11,6 +11,12 @@ const { v2: cloudinary } = require("cloudinary");
 const { initDb, models } = require("./db");
 const orderLogic = require("./orderLogic");
 const {
+  ADMIN_PERMISSIONS,
+  ADMIN_PERMISSION_KEYS,
+  isPermissionAllowedForRole,
+  normalizeAdminPermissions
+} = require("./adminPermissions");
+const {
   sendOrderEmail,
   sendCustomerOrderEmail,
   sendPasswordResetEmail,
@@ -37,20 +43,6 @@ const ORDER_RETENTION_DAYS = 60;
 const COMPLAINT_RETENTION_DAYS = 30;
 const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 10);
 const MongoStore = MongoStoreModule && MongoStoreModule.default ? MongoStoreModule.default : MongoStoreModule;
-const ADMIN_PERMISSIONS = [
-  { key: "alerts", label: "New Order Alerts" },
-  { key: "dashboard", label: "Dashboard" },
-  { key: "promos", label: "Promo Management" },
-  { key: "products", label: "Product Management" },
-  { key: "stock", label: "Stock Control" },
-  { key: "orders", label: "Orders" },
-  { key: "delivery_assign", label: "Delivery Assignment" },
-  { key: "delivery_agent", label: "Delivery Agent Portal" },
-  { key: "complaints", label: "Customer Complaints" },
-  { key: "administration", label: "Administration" }
-];
-const ADMIN_PERMISSION_KEYS = ADMIN_PERMISSIONS.map((p) => p.key);
-const DELIVERY_ASSIGNMENT_ROLES = new Set(["Inventory Associate", "Operations Manager", "Admin Assistant"]);
 
 const hasCloudinaryConfig = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
@@ -110,6 +102,10 @@ app.use((req, _res, next) => {
 app.use(express.static(publicDir, { index: false }));
 app.use(express.static(reactDistDir));
 app.use("/resources", express.static(resourceDir));
+
+app.get(["/myfarmslogo.png", "/groundnutoil.jpg", "/bulldriven.png"], (req, res) => {
+  res.redirect(301, `/assets/images${req.path}`);
+});
 
 function toSafeBaseName(fileName, fallback = "file") {
   const ext = path.extname(fileName || "").toLowerCase();
@@ -322,20 +318,6 @@ function normalizeAadhaarNumber(aadhaarNumber) {
 function hashAadhaarNumber(aadhaarNumber) {
   const secret = process.env.SESSION_SECRET || "myfarms_dev_secret";
   return crypto.createHash("sha256").update(`${secret}:${normalizeAadhaarNumber(aadhaarNumber)}`).digest("hex");
-}
-
-function normalizeAdminPermissions(value) {
-  const raw = Array.isArray(value)
-    ? value
-    : String(value || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  return [...new Set(raw.filter((permission) => ADMIN_PERMISSION_KEYS.includes(permission)))];
-}
-
-function canRoleAssignDeliveries(role) {
-  return DELIVERY_ASSIGNMENT_ROLES.has(String(role || "").trim());
 }
 
 function serializeAdministrativeEmployee(employee) {
@@ -1317,8 +1299,11 @@ app.post("/api/admin/employees", requireAdminPermission("administration"), (req,
       if (!role) return res.status(400).json({ error: "Employee role is required" });
       if (password.length < 8) return res.status(400).json({ error: "Temporary password must be at least 8 characters" });
       if (!permissions.length) return res.status(400).json({ error: "Select at least one admin feature access" });
-      if (permissions.includes("delivery_assign") && !canRoleAssignDeliveries(role)) {
+      if (permissions.includes("delivery_assign") && !isPermissionAllowedForRole("delivery_assign", role)) {
         return res.status(400).json({ error: "Only Inventory Associate, Operations Manager, or Admin Assistant can assign deliveries" });
+      }
+      if (permissions.includes("delivery_supervisor") && !isPermissionAllowedForRole("delivery_supervisor", role)) {
+        return res.status(400).json({ error: "Only Inventory Associate or Operations Manager can use Delivery Supervisor Dashboard" });
       }
       if (!req.file) return res.status(400).json({ error: "Employee photo is required" });
 
@@ -1394,8 +1379,11 @@ app.put("/api/admin/employees/:id", requireAdminPermission("administration"), (r
       if (Number.isNaN(dateOfBirth.getTime())) return res.status(400).json({ error: "Valid date of birth is required" });
       if (!role) return res.status(400).json({ error: "Employee role is required" });
       if (!permissions.length) return res.status(400).json({ error: "Select at least one admin feature access" });
-      if (permissions.includes("delivery_assign") && !canRoleAssignDeliveries(role)) {
+      if (permissions.includes("delivery_assign") && !isPermissionAllowedForRole("delivery_assign", role)) {
         return res.status(400).json({ error: "Only Inventory Associate, Operations Manager, or Admin Assistant can assign deliveries" });
+      }
+      if (permissions.includes("delivery_supervisor") && !isPermissionAllowedForRole("delivery_supervisor", role)) {
+        return res.status(400).json({ error: "Only Inventory Associate or Operations Manager can use Delivery Supervisor Dashboard" });
       }
       if (password && password.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
       if (aadhaarNumber && !isValidAadhaarNumber(aadhaarNumber)) {
@@ -2340,6 +2328,67 @@ app.get("/api/admin/orders", requireAnyAdminPermission(["orders", "alerts", "del
   });
 });
 
+app.get("/api/admin/inventory-alerts", requireAdminPermission("inventory_alerts"), async (req, res) => {
+  const threshold = Math.max(0, Math.min(9999, Number.parseInt(String(req.query.threshold || "5"), 10) || 5));
+  const products = await models.Product.find({}).sort({ category: 1, name: 1 }).lean();
+  const alerts = [];
+
+  for (const product of products) {
+    if (product.forceOutOfStock) {
+      alerts.push({
+        id: String(product._id),
+        productId: String(product._id),
+        productName: product.name,
+        category: product.category,
+        unit: product.unit,
+        variantName: null,
+        stock: Number(product.stock || 0),
+        threshold,
+        reason: "Marked Out Of Stock"
+      });
+      continue;
+    }
+
+    if (product.variants && product.variants.length) {
+      for (const variant of product.variants) {
+        const stock = Number(variant.stock || 0);
+        if (stock <= threshold) {
+          alerts.push({
+            id: `${product._id}-${variant._id}`,
+            productId: String(product._id),
+            productName: product.name,
+            category: product.category,
+            unit: product.unit,
+            variantName: variant.name,
+            stock,
+            threshold,
+            reason: stock <= 0 ? "Out Of Stock" : "Low Stock"
+          });
+        }
+      }
+      continue;
+    }
+
+    const stock = Number(product.stock || 0);
+    if (stock <= threshold) {
+      alerts.push({
+        id: String(product._id),
+        productId: String(product._id),
+        productName: product.name,
+        category: product.category,
+        unit: product.unit,
+        variantName: null,
+        stock,
+        threshold,
+        reason: stock <= 0 ? "Out Of Stock" : "Low Stock"
+      });
+    }
+  }
+
+  alerts.sort((a, b) => a.stock - b.stock || a.productName.localeCompare(b.productName));
+  res.json({ threshold, alerts });
+});
+
 app.get("/api/admin/delivery/agents", requireAdminPermission("delivery_assign"), async (_req, res) => {
   const employees = await models.AdministrativeEmployee.find({
     active: true,
@@ -2363,6 +2412,119 @@ app.get("/api/admin/delivery/agents", requireAdminPermission("delivery_assign"),
     agents: employees.map((employee) => ({
       ...serializeDeliveryEmployee(employee),
       activeDeliveries: countMap.get(String(employee._id)) || 0
+    }))
+  });
+});
+
+app.get("/api/admin/delivery/supervisor", requireAdminPermission("delivery_supervisor"), async (_req, res) => {
+  const activeStatuses = ["PLACED", "ASSIGNED", "ACCEPTED_BY_DELIVERY", "OUT_FOR_DELIVERY"];
+  const now = Date.now();
+  const lateCutoff = new Date(now - 24 * 60 * 60 * 1000);
+  const startToday = new Date();
+  startToday.setHours(0, 0, 0, 0);
+  const endToday = new Date();
+  endToday.setHours(23, 59, 59, 999);
+
+  const [agents, activeOrders, deliveredToday, canceledRecent] = await Promise.all([
+    models.AdministrativeEmployee.find({ active: true, permissions: "delivery_agent" })
+      .sort({ name: 1 })
+      .select("name email phoneNumber role employeePhotoPath active")
+      .lean(),
+    models.Order.find({ status: { $in: activeStatuses } })
+      .sort({ createdAt: 1 })
+      .select("customerName customerPhone deliveryAddress paymentMethod totalAmount status createdAt deliveryEmployeeId deliveryAssignedBy deliveryAssignedAt deliveryAcceptedAt")
+      .populate("deliveryEmployeeId", "name email phoneNumber role employeePhotoPath active")
+      .lean(),
+    models.Order.find({ status: "DELIVERED", deliveryCompletedAt: { $gte: startToday, $lte: endToday } })
+      .select("_id deliveryEmployeeId totalAmount deliveryCompletedAt")
+      .lean(),
+    models.Order.find({ status: "CANCELED", deliveryCanceledAt: { $ne: null } })
+      .sort({ deliveryCanceledAt: -1 })
+      .limit(8)
+      .select("customerName customerPhone totalAmount status deliveryEmployeeId deliveryCancelNote deliveryCanceledAt")
+      .populate("deliveryEmployeeId", "name phoneNumber role")
+      .lean()
+  ]);
+
+  const workloadMap = new Map(
+    agents.map((agent) => [
+      String(agent._id),
+      {
+        ...serializeDeliveryEmployee(agent),
+        activeDeliveries: 0,
+        waitingAcceptance: 0,
+        outForDelivery: 0,
+        lateDeliveries: 0,
+        deliveredToday: 0
+      }
+    ])
+  );
+
+  for (const order of activeOrders) {
+    const agentId = order.deliveryEmployeeId ? String(order.deliveryEmployeeId._id || order.deliveryEmployeeId) : "";
+    if (!agentId || !workloadMap.has(agentId)) continue;
+    const row = workloadMap.get(agentId);
+    row.activeDeliveries += 1;
+    if (order.status === "ASSIGNED" && !order.deliveryAcceptedAt) row.waitingAcceptance += 1;
+    if (order.status === "OUT_FOR_DELIVERY") row.outForDelivery += 1;
+    const referenceDate = order.deliveryAssignedAt || order.createdAt;
+    if (referenceDate && referenceDate <= lateCutoff) row.lateDeliveries += 1;
+  }
+
+  for (const order of deliveredToday) {
+    const agentId = order.deliveryEmployeeId ? String(order.deliveryEmployeeId) : "";
+    if (agentId && workloadMap.has(agentId)) {
+      workloadMap.get(agentId).deliveredToday += 1;
+    }
+  }
+
+  const unassigned = activeOrders
+    .filter((order) => !order.deliveryEmployeeId)
+    .map((order) => ({
+      id: String(order._id),
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      deliveryAddress: order.deliveryAddress,
+      paymentMethod: order.paymentMethod,
+      totalAmount: order.totalAmount,
+      status: order.status,
+      createdAt: order.createdAt
+    }));
+
+  const pending = activeOrders
+    .filter((order) => order.deliveryEmployeeId)
+    .map((order) => ({
+      id: String(order._id),
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      status: order.status,
+      totalAmount: order.totalAmount,
+      assignedBy: order.deliveryAssignedBy || null,
+      assignedAt: order.deliveryAssignedAt || null,
+      acceptedAt: order.deliveryAcceptedAt || null,
+      isLate: Boolean((order.deliveryAssignedAt || order.createdAt) && (order.deliveryAssignedAt || order.createdAt) <= lateCutoff),
+      agent: serializeDeliveryEmployee(order.deliveryEmployeeId)
+    }));
+
+  res.json({
+    kpis: {
+      unassigned: unassigned.length,
+      activeDeliveries: activeOrders.filter((order) => order.deliveryEmployeeId).length,
+      lateDeliveries: pending.filter((order) => order.isLate).length,
+      deliveredToday: deliveredToday.length,
+      canceledRecent: canceledRecent.length
+    },
+    agents: Array.from(workloadMap.values()),
+    unassigned,
+    pending,
+    canceledRecent: canceledRecent.map((order) => ({
+      id: String(order._id),
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      totalAmount: order.totalAmount,
+      cancelNote: order.deliveryCancelNote || "No reason provided",
+      canceledAt: order.deliveryCanceledAt,
+      agent: order.deliveryEmployeeId ? serializeDeliveryEmployee(order.deliveryEmployeeId) : null
     }))
   });
 });

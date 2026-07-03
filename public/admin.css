@@ -150,6 +150,11 @@ form {
   padding: 0.75rem;
 }
 
+.admin-subtools {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .admin-list-disclosure summary {
   cursor: pointer;
   color: #1f4c2c;
@@ -237,6 +242,13 @@ button:hover {
 .compact-order {
   display: grid;
   gap: 0.45rem;
+}
+
+.delivery-supervisor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 1rem;
+  align-items: start;
 }
 
 .order,
@@ -406,6 +418,10 @@ button:hover {
   }
 
   .delivery-assignment-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .delivery-supervisor-grid {
     grid-template-columns: 1fr;
   }
 

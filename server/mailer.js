@@ -192,7 +192,7 @@ function getLogoAttachment() {
   const candidates = [
     path.join(__dirname, "..", "src", "main", "resources", "mailimage.png"),
     path.join(__dirname, "..", "public", "mailimage.png"),
-    path.join(__dirname, "..", "public", "myfarmslogo.png"),
+    path.join(__dirname, "..", "public", "assets", "images", "myfarmslogo.png"),
     path.join(__dirname, "..", "src", "main", "resources", "myfarmslogo.png")
   ];
   const logoPath = candidates.find((p) => fs.existsSync(p));

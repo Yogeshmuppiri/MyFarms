@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Farms Admin</title>
-    <link rel="icon" type="image/png" href="/myfarmslogo.png" />
+    <link rel="icon" type="image/png" href="/assets/images/myfarmslogo.png" />
     <link rel="stylesheet" href="admin.css" />
   </head>
   <body>
     <main class="wrap">
       <header class="head">
         <div class="admin-brand">
-          <img src="/myfarmslogo.png" alt="My Farms logo" class="admin-brand-logo" />
+          <img src="/assets/images/myfarmslogo.png" alt="My Farms logo" class="admin-brand-logo" />
           <h1>My Farms Admin</h1>
         </div>
         <div id="adminActions"></div>
@@ -87,9 +87,9 @@
 
         <section class="card" data-permission="administration">
           <h2>Administration</h2>
-          <div class="split">
-            <div>
-              <h3>Add New Administrative</h3>
+          <div class="admin-subtools">
+            <details class="admin-list-disclosure">
+              <summary>Add New Administrative</summary>
               <form id="employeeForm" enctype="multipart/form-data" class="grid-form">
                 <label>Name</label>
                 <input id="employeeName" type="text" required />
@@ -117,49 +117,52 @@
                 <div id="employeePermissions" class="permission-grid"></div>
                 <button type="submit">Create Administrative</button>
               </form>
-            </div>
+            </details>
+
+            <details class="admin-list-disclosure">
+              <summary>Manage Administrative</summary>
+              <label>Select Administrative</label>
+              <select id="manageEmployeeSelect"></select>
+              <form id="manageEmployeeForm" enctype="multipart/form-data" class="grid-form">
+                <label>Name</label>
+                <input id="manageEmployeeName" type="text" required />
+                <label>Valid Gmail Account</label>
+                <input id="manageEmployeeEmail" type="email" required />
+                <label>Phone Number</label>
+                <input id="manageEmployeePhone" type="tel" inputmode="numeric" maxlength="10" required />
+                <label>Date of Birth</label>
+                <input id="manageEmployeeDob" type="date" required />
+                <label>Role</label>
+                <select id="manageEmployeeRole" required>
+                  <option value="Delivery Associate">Delivery Associate</option>
+                  <option value="Support Associate">Support Associate</option>
+                  <option value="Inventory Associate">Inventory Associate</option>
+                  <option value="Operations Manager">Operations Manager</option>
+                  <option value="Admin Assistant">Admin Assistant</option>
+                </select>
+                <label>Status</label>
+                <select id="manageEmployeeActive">
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </select>
+                <label>Update Aadhaar Number (Optional)</label>
+                <input id="manageEmployeeAadhaar" type="text" inputmode="numeric" maxlength="12" placeholder="Leave blank to keep current" />
+                <label>New Password (Optional)</label>
+                <input id="manageEmployeePassword" type="password" minlength="8" placeholder="Leave blank to keep current" />
+                <label>Replace Photo (Optional)</label>
+                <input id="manageEmployeePhoto" type="file" accept=".png,.jpg,.jpeg,.webp" />
+                <label>Tool Access</label>
+                <div id="manageEmployeePermissions" class="permission-grid"></div>
+                <button type="submit">Save Administrative</button>
+                <button id="deleteEmployeeBtn" type="button">Delete Administrative</button>
+              </form>
+            </details>
+
             <details class="admin-list-disclosure">
               <summary>Administrative List</summary>
               <div id="employeeList" class="stack"></div>
             </details>
           </div>
-
-          <h3>Manage Administrative</h3>
-          <label>Select Administrative</label>
-          <select id="manageEmployeeSelect"></select>
-          <form id="manageEmployeeForm" enctype="multipart/form-data" class="grid-form">
-            <label>Name</label>
-            <input id="manageEmployeeName" type="text" required />
-            <label>Valid Gmail Account</label>
-            <input id="manageEmployeeEmail" type="email" required />
-            <label>Phone Number</label>
-            <input id="manageEmployeePhone" type="tel" inputmode="numeric" maxlength="10" required />
-            <label>Date of Birth</label>
-            <input id="manageEmployeeDob" type="date" required />
-            <label>Role</label>
-            <select id="manageEmployeeRole" required>
-              <option value="Delivery Associate">Delivery Associate</option>
-              <option value="Support Associate">Support Associate</option>
-              <option value="Inventory Associate">Inventory Associate</option>
-              <option value="Operations Manager">Operations Manager</option>
-              <option value="Admin Assistant">Admin Assistant</option>
-            </select>
-            <label>Status</label>
-            <select id="manageEmployeeActive">
-              <option value="true">Active</option>
-              <option value="false">Inactive</option>
-            </select>
-            <label>Update Aadhaar Number (Optional)</label>
-            <input id="manageEmployeeAadhaar" type="text" inputmode="numeric" maxlength="12" placeholder="Leave blank to keep current" />
-            <label>New Password (Optional)</label>
-            <input id="manageEmployeePassword" type="password" minlength="8" placeholder="Leave blank to keep current" />
-            <label>Replace Photo (Optional)</label>
-            <input id="manageEmployeePhoto" type="file" accept=".png,.jpg,.jpeg,.webp" />
-            <label>Tool Access</label>
-            <div id="manageEmployeePermissions" class="permission-grid"></div>
-            <button type="submit">Save Administrative</button>
-            <button id="deleteEmployeeBtn" type="button">Delete Administrative</button>
-          </form>
         </section>
 
         <section class="card" data-permission="promos">
@@ -285,6 +288,15 @@
           </div>
         </section>
 
+        <section class="card" data-permission="inventory_alerts">
+          <h2>Inventory Alerts</h2>
+          <form id="inventoryAlertForm" class="inline-form">
+            <input id="inventoryAlertThreshold" type="number" min="0" step="1" value="5" aria-label="Low stock threshold" />
+            <button type="submit">Refresh Alerts</button>
+          </form>
+          <div id="inventoryAlertsWrap" class="orders"></div>
+        </section>
+
         <section class="card" data-permission="orders">
           <h2>Orders</h2>
           <form id="orderFilterForm" class="grid-form">
@@ -333,6 +345,29 @@
           </div>
         </section>
 
+        <section class="card" data-permission="delivery_supervisor">
+          <h2>Delivery Supervisor Dashboard</h2>
+          <div class="kpis" id="deliverySupervisorKpis"></div>
+          <div class="delivery-supervisor-grid">
+            <div>
+              <h3>Agent Workload</h3>
+              <div id="supervisorAgentsWrap" class="agent-grid"></div>
+            </div>
+            <div>
+              <h3>Unassigned Orders</h3>
+              <div id="supervisorUnassignedWrap" class="stack"></div>
+            </div>
+            <div>
+              <h3>Pending / Late Deliveries</h3>
+              <div id="supervisorPendingWrap" class="stack"></div>
+            </div>
+            <div>
+              <h3>Recent Canceled Deliveries</h3>
+              <div id="supervisorCanceledWrap" class="stack"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="card" data-permission="delivery_agent">
           <h2>My Delivery Portal</h2>
           <div id="myDeliveriesWrap" class="orders"></div>
@@ -355,6 +390,7 @@
     </main>
 
     <div id="toast" class="toast hidden"></div>
+    <script src="admin-config.js"></script>
     <script src="admin.js"></script>
   </body>
 </html>
