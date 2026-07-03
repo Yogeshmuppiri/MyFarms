@@ -143,6 +143,24 @@ form {
   margin: 0;
 }
 
+.admin-list-disclosure {
+  border: 1px solid #d8e6d3;
+  border-radius: 10px;
+  background: #f9fcf8;
+  padding: 0.75rem;
+}
+
+.admin-list-disclosure summary {
+  cursor: pointer;
+  color: #1f4c2c;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.admin-list-disclosure .stack {
+  margin-top: 0.75rem;
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: 1fr 110px 110px auto;
@@ -185,6 +203,40 @@ button:hover {
 .stack {
   display: grid;
   gap: 0.7rem;
+}
+
+.delivery-assignment-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(280px, 1fr) minmax(280px, 1fr);
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.delivery-panel {
+  min-width: 0;
+}
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.55rem;
+}
+
+.delivery-agent-card {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.delivery-agent-card .employee-photo {
+  width: 48px;
+  height: 48px;
+}
+
+.compact-order {
+  display: grid;
+  gap: 0.45rem;
 }
 
 .order,
@@ -350,6 +402,10 @@ button:hover {
   }
 
   .split {
+    grid-template-columns: 1fr;
+  }
+
+  .delivery-assignment-grid {
     grid-template-columns: 1fr;
   }
 

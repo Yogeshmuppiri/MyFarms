@@ -26,6 +26,7 @@ const els = {
   orderCategory: document.getElementById("orderCategory"),
   newOrderAlerts: document.getElementById("newOrderAlerts"),
   deliveryAgentsList: document.getElementById("deliveryAgentsList"),
+  unassignedDeliveryList: document.getElementById("unassignedDeliveryList"),
   deliveryAssignForm: document.getElementById("deliveryAssignForm"),
   deliveryOrderSelect: document.getElementById("deliveryOrderSelect"),
   deliveryAgentSelect: document.getElementById("deliveryAgentSelect"),
@@ -132,10 +133,12 @@ let isVariantSubmitting = false;
 let isStockFlagSubmitting = false;
 let isDeliveryAssignSubmitting = false;
 let orderPollTimer = null;
+let adminIdleTimer = null;
 let knownOrderIds = new Set();
 let orderPollInitialized = false;
 let panelAccordionInitialized = false;
 let orderAlerts = [];
+const ADMIN_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 async function api(path, options = {}) {
   try {
@@ -150,7 +153,14 @@ async function api(path, options = {}) {
       ...options
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "Request failed");
+    if (!res.ok) {
+      if (res.status === 401 && currentAdmin && String(data.error || "").toLowerCase().includes("authentication")) {
+        currentAdmin = null;
+        setAdminUI(false);
+        toast("Session timed out. Please login again.", { type: "error", persistent: true });
+      }
+      throw new Error(data.error || "Request failed");
+    }
     return data;
   } catch (err) {
     if (err && err.name === "TypeError") {
@@ -211,6 +221,9 @@ function setButtonLoading(button, loading, loadingText = "Please wait...") {
 
 function hasPermission(permission) {
   if (!permission) return true;
+  if (permission === "delivery_agent") {
+    return Boolean(currentAdmin && !currentAdmin.isOwner && Array.isArray(currentAdmin.permissions) && currentAdmin.permissions.includes(permission));
+  }
   if (currentAdmin && currentAdmin.isOwner) return true;
   return Boolean(currentAdmin && Array.isArray(currentAdmin.permissions) && currentAdmin.permissions.includes(permission));
 }
@@ -226,10 +239,20 @@ function applyPermissionVisibility() {
   });
 }
 
+function availablePermissionsForRole(role) {
+  const selectedRole = String(role || "").trim();
+  return permissionsCatalog.filter((permission) => {
+    if (permission.key !== "delivery_agent") return true;
+    return selectedRole === "Delivery Associate";
+  });
+}
+
 function renderPermissionCheckboxes(container, selectedPermissions = [], prefix = "perm") {
   if (!container) return;
   const selected = new Set(selectedPermissions);
-  container.innerHTML = permissionsCatalog
+  const roleSelect = container === els.employeePermissions ? els.employeeRole : container === els.manageEmployeePermissions ? els.manageEmployeeRole : null;
+  const permissions = availablePermissionsForRole(roleSelect ? roleSelect.value : "");
+  container.innerHTML = permissions
     .map(
       (permission) => `
         <label>
@@ -306,6 +329,23 @@ function addOrderAlerts(newOrders) {
     });
     existing.add(o.id);
   }
+  saveOrderAlerts();
+  renderOrderAlerts();
+}
+
+async function refreshNewOrderAlerts() {
+  if (!hasPermission("alerts")) return;
+  const data = await api("/api/admin/orders?status=PLACED");
+  const openAlerts = (data.orders || []).map((o) => ({
+    orderId: o.id,
+    createdAt: o.createdAt || new Date().toISOString(),
+    customerName: o.customerName || "",
+    paymentMethod: o.paymentMethod || "",
+    totalAmount: Number(o.totalAmount || 0)
+  }));
+  orderAlerts = openAlerts
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 25);
   saveOrderAlerts();
   renderOrderAlerts();
 }
@@ -442,6 +482,7 @@ function setAdminUI(isAdmin) {
     knownOrderIds = new Set();
     orderPollInitialized = false;
   }
+  if (!isAdmin) stopAdminIdleTimer();
   els.loginCard.classList.toggle("hidden", isAdmin);
   els.panelCard.classList.toggle("hidden", !isAdmin);
   if (isAdmin) {
@@ -473,6 +514,38 @@ function setAdminUI(isAdmin) {
     };
   }
 }
+
+async function forceAdminSessionTimeout() {
+  try {
+    await api("/api/admin/logout", { method: "POST" });
+  } catch {
+    // Session may already be expired server-side.
+  }
+  if (orderPollTimer) {
+    clearInterval(orderPollTimer);
+    orderPollTimer = null;
+  }
+  knownOrderIds = new Set();
+  orderPollInitialized = false;
+  currentAdmin = null;
+  setAdminUI(false);
+  toast("Session timed out. Please login again.", { type: "error", persistent: true });
+}
+
+function resetAdminIdleTimer() {
+  if (!currentAdmin) return;
+  if (adminIdleTimer) clearTimeout(adminIdleTimer);
+  adminIdleTimer = setTimeout(forceAdminSessionTimeout, ADMIN_IDLE_TIMEOUT_MS);
+}
+
+function stopAdminIdleTimer() {
+  if (adminIdleTimer) clearTimeout(adminIdleTimer);
+  adminIdleTimer = null;
+}
+
+["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
+  window.addEventListener(eventName, resetAdminIdleTimer, { passive: true });
+});
 
 function buildDashboardQuery() {
   const params = new URLSearchParams();
@@ -524,6 +597,7 @@ async function renderOrders() {
   const data = await api(`/api/admin/orders${buildOrdersQuery()}`);
   adminOrders = data.orders || [];
   populateDeliveryAssignmentSelects();
+  renderUnassignedDeliveries();
   if (!data.orders.length) {
     els.ordersWrap.innerHTML = '<p class="meta">No orders yet.</p>';
     return;
@@ -614,7 +688,7 @@ async function renderOrders() {
 function populateDeliveryAssignmentSelects() {
   if (!els.deliveryOrderSelect || !els.deliveryAgentSelect) return;
 
-  const assignableOrders = adminOrders.filter((order) => !["DELIVERED", "CANCELED"].includes(order.status));
+  const assignableOrders = adminOrders.filter((order) => !["DELIVERED", "CANCELED"].includes(order.status) && !order.delivery?.employee);
   const previousOrder = els.deliveryOrderSelect.value;
   const previousAgent = els.deliveryAgentSelect.value;
 
@@ -634,6 +708,37 @@ function populateDeliveryAssignmentSelects() {
   if (deliveryAgents.some((agent) => agent.id === previousAgent)) els.deliveryAgentSelect.value = previousAgent;
 }
 
+function renderUnassignedDeliveries() {
+  if (!els.unassignedDeliveryList) return;
+  const unassigned = adminOrders.filter((order) => !["DELIVERED", "CANCELED"].includes(order.status) && !order.delivery?.employee);
+  if (!unassigned.length) {
+    els.unassignedDeliveryList.innerHTML = '<div class="meta">No unassigned deliveries right now.</div>';
+    return;
+  }
+
+  els.unassignedDeliveryList.innerHTML = unassigned
+    .map(
+      (order) => `
+        <article class="item compact-order">
+          <div class="row" style="justify-content:space-between;">
+            <strong>#${order.id.slice(-6).toUpperCase()}</strong>
+            <span class="tag">${statusLabel(order.status)}</span>
+          </div>
+          <div class="meta">${order.customerName} | ${order.customerPhone}</div>
+          <div class="meta">Total: Rs.${Number(order.totalAmount || 0).toFixed(2)} | ${new Date(order.createdAt).toLocaleString()}</div>
+          <button type="button" data-select-unassigned="${order.id}">Select for Assignment</button>
+        </article>
+      `
+    )
+    .join("");
+
+  els.unassignedDeliveryList.querySelectorAll("button[data-select-unassigned]").forEach((btn) => {
+    btn.onclick = () => {
+      els.deliveryOrderSelect.value = btn.dataset.selectUnassigned;
+    };
+  });
+}
+
 async function refreshDeliveryAgents() {
   if (!hasPermission("delivery_assign")) return;
   const data = await api("/api/admin/delivery/agents");
@@ -644,16 +749,14 @@ async function refreshDeliveryAgents() {
         .map(
           (agent) => `
           <div class="item">
-            <div class="row" style="justify-content:space-between;">
-              <div class="row">
-                ${agent.employeePhotoPath ? `<img class="employee-photo" src="${resolveAssetUrl(agent.employeePhotoPath)}" alt="${agent.name}" />` : ""}
-                <div>
-                  <strong>${agent.name}</strong>
-                  <div class="meta">${agent.role} | ${agent.email} | ${agent.phoneNumber}</div>
-                  <div class="meta">Active deliveries: ${agent.activeDeliveries || 0}</div>
-                </div>
+            <div class="delivery-agent-card">
+              ${agent.employeePhotoPath ? `<img class="employee-photo" src="${resolveAssetUrl(agent.employeePhotoPath)}" alt="${agent.name}" />` : ""}
+              <div>
+                <strong>${agent.name}</strong>
+                <div class="meta">${agent.phoneNumber}</div>
+                <div class="meta">Active deliveries: ${agent.activeDeliveries || 0}</div>
+                <span class="tag">${agent.active ? "Active" : "Inactive"}</span>
               </div>
-              <span class="tag">${agent.active ? "Active" : "Inactive"}</span>
             </div>
           </div>
         `
@@ -676,7 +779,9 @@ async function renderMyDeliveries() {
 
   els.myDeliveriesWrap.innerHTML = myDeliveries
     .map(
-      (delivery) => `
+      (delivery) => {
+        const isClosed = ["DELIVERED", "CANCELED"].includes(delivery.status);
+        return `
       <article class="order">
         <div class="row" style="justify-content:space-between;">
           <strong>Order #${delivery.id.slice(-6).toUpperCase()}</strong>
@@ -690,15 +795,16 @@ async function renderMyDeliveries() {
           .map((item) => `${item.productName}${item.variantName ? ` (${item.variantName})` : ""} x ${item.quantity}`)
           .join(", ")}</div>
         <div class="row" style="margin-top:0.5rem;">
-          ${delivery.deliveryAcceptedAt ? "" : `<button type="button" data-action="accept-delivery" data-id="${delivery.id}">Accept Delivery</button>`}
-          ${delivery.deliveryAcceptedAt ? `
+          ${!delivery.deliveryAcceptedAt && !isClosed ? `<button type="button" data-action="accept-delivery" data-id="${delivery.id}">Accept Delivery</button>` : ""}
+          ${delivery.deliveryAcceptedAt && !isClosed ? `
             <button type="button" data-action="delivery-out" data-id="${delivery.id}">Out for Delivery</button>
             <button type="button" data-action="delivery-cancel" data-id="${delivery.id}">Cancel Delivery</button>
             <button type="button" data-action="delivery-delivered" data-id="${delivery.id}">Delivered</button>
           ` : ""}
         </div>
       </article>
-    `
+    `;
+      }
     )
     .join("");
 
@@ -1146,6 +1252,7 @@ async function refreshProducts() {
 
 async function refreshAll() {
   const tasks = [];
+  if (hasPermission("alerts")) tasks.push(refreshNewOrderAlerts());
   if (hasPermission("dashboard")) tasks.push(renderDashboard());
   if (hasAnyPermission(["orders", "alerts", "delivery_assign"])) tasks.push(renderOrders());
   if (hasPermission("delivery_assign")) tasks.push(refreshDeliveryAgents());
@@ -1195,7 +1302,7 @@ if (els.deliveryAssignForm) {
         body: JSON.stringify({ employeeId })
       });
       toast("Delivery assigned and agent notified");
-      await Promise.all([renderOrders(), refreshDeliveryAgents()]);
+      await Promise.all([renderOrders(), refreshDeliveryAgents(), refreshNewOrderAlerts()]);
     } catch (err) {
       toast(err.message);
     } finally {
@@ -1203,6 +1310,16 @@ if (els.deliveryAssignForm) {
       isDeliveryAssignSubmitting = false;
     }
   };
+}
+
+if (els.employeeRole) {
+  els.employeeRole.onchange = () =>
+    renderPermissionCheckboxes(els.employeePermissions, getCheckedPermissions(els.employeePermissions), "new-employee-perm");
+}
+
+if (els.manageEmployeeRole) {
+  els.manageEmployeeRole.onchange = () =>
+    renderPermissionCheckboxes(els.manageEmployeePermissions, getCheckedPermissions(els.manageEmployeePermissions), "manage-employee-perm");
 }
 
 els.complaintFilterForm.onsubmit = async (e) => {
@@ -1551,10 +1668,12 @@ els.adminLoginForm.onsubmit = async (e) => {
     currentAdmin = data.admin || null;
     permissionsCatalog = data.permissionsCatalog || permissionsCatalog;
     setAdminUI(true);
+    resetAdminIdleTimer();
     await refreshAll();
     orderPollInitialized = false;
     startOrderPolling();
-    toast("Admin login successful");
+    const roleLabel = currentAdmin?.isOwner ? "Owner admin" : currentAdmin?.role || "Administrative employee";
+    toast(`${roleLabel} login successful`);
     els.adminLoginForm.reset();
   } catch (err) {
     toast(err.message);
@@ -1572,6 +1691,7 @@ els.adminLoginForm.onsubmit = async (e) => {
     const isAdmin = Boolean(data.admin);
     setAdminUI(isAdmin);
     if (isAdmin) {
+      resetAdminIdleTimer();
       await refreshAll();
       orderPollInitialized = false;
       startOrderPolling();

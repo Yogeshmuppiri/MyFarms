@@ -9,6 +9,7 @@ const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { v2: cloudinary } = require("cloudinary");
 const { initDb, models } = require("./db");
+const orderLogic = require("./orderLogic");
 const {
   sendOrderEmail,
   sendCustomerOrderEmail,
@@ -34,7 +35,7 @@ const ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const TAX_RATE = 0.05;
 const ORDER_RETENTION_DAYS = 60;
 const COMPLAINT_RETENTION_DAYS = 30;
-const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 30);
+const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 10);
 const MongoStore = MongoStoreModule && MongoStoreModule.default ? MongoStoreModule.default : MongoStoreModule;
 const ADMIN_PERMISSIONS = [
   { key: "alerts", label: "New Order Alerts" },
@@ -285,12 +286,11 @@ function getSessionUser(user) {
 }
 
 function calculateEarnedCoins(amount) {
-  const eligibleAmount = Math.max(0, Number(amount || 0));
-  return Math.floor(eligibleAmount / 50);
+  return orderLogic.calculateEarnedCoins(amount);
 }
 
 function calculateWalletDiscountFromCoins(coins) {
-  return Math.floor(Math.max(0, Number(coins || 0)) / 50);
+  return orderLogic.calculateWalletDiscountFromCoins(coins);
 }
 
 async function issueEmailVerificationForUser(user) {
@@ -303,7 +303,7 @@ async function issueEmailVerificationForUser(user) {
 }
 
 function isValidContactNumber(contactNumber) {
-  return /^\d{10}$/.test(String(contactNumber || "").trim());
+  return orderLogic.isValidContactNumber(contactNumber);
 }
 
 function isValidMobileNumber(mobileNumber) {
@@ -643,6 +643,12 @@ function buildComplaintTimeline(c) {
   return timeline;
 }
 
+function createBadRequestError(message) {
+  const err = new Error(message);
+  err.statusCode = 400;
+  return err;
+}
+
 async function validatePromoCode({ promoCode, subtotalAmount }) {
   const code = String(promoCode || "").trim().toUpperCase();
   if (!code) {
@@ -651,19 +657,19 @@ async function validatePromoCode({ promoCode, subtotalAmount }) {
 
   const promo = await models.PromoCode.findOne({ code, active: true });
   if (!promo) {
-    throw new Error("Invalid promo code");
+    throw createBadRequestError("Invalid promo code");
   }
 
   if (promo.expiresAt <= new Date()) {
-    throw new Error("Promo code has expired");
+    throw createBadRequestError("Promo code has expired");
   }
 
   if (promo.usedCount >= promo.maxUses) {
-    throw new Error("Promo usage limit reached");
+    throw createBadRequestError("Promo usage limit reached");
   }
 
   if (subtotalAmount < promo.minOrderValue) {
-    throw new Error(`Minimum order value for this promo is Rs.${promo.minOrderValue}`);
+    throw createBadRequestError(`Minimum order value for this promo is Rs.${promo.minOrderValue}`);
   }
 
   const discountAmount = Number(((subtotalAmount * promo.discountPercent) / 100).toFixed(2));
@@ -1969,82 +1975,23 @@ app.post("/api/orders", requireAuth, async (req, res) => {
   try {
     const { items, paymentMethod, address, fullName, contactNumber, tipAmount, promoCode, useWalletCoins } = req.body;
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "Cart items are required" });
-    }
-
-    if (!["COD", "PICKUP"].includes(paymentMethod)) {
-      return res.status(400).json({ error: "Invalid payment method" });
-    }
-
-    if (paymentMethod === "COD" && (!address || String(address).trim().length < 8)) {
-      return res.status(400).json({ error: "Valid delivery address is required for COD" });
-    }
-    if (!fullName || String(fullName).trim().length < 2) {
-      return res.status(400).json({ error: "Full name is required" });
-    }
-    if (!isValidContactNumber(contactNumber)) {
-      return res.status(400).json({ error: "Please enter a valid 10-digit mobile number" });
-    }
-    const parsedTip = Number(tipAmount || 0);
-    if (!Number.isFinite(parsedTip) || parsedTip < 0 || parsedTip > 5000) {
-      return res.status(400).json({ error: "Tip amount must be between 0 and 5000" });
-    }
+    const { parsedTip } = orderLogic.validateOrderRequest({
+      items,
+      paymentMethod,
+      address,
+      fullName,
+      contactNumber,
+      tipAmount
+    });
 
     const resolvedItems = [];
     let subtotalAmount = 0;
 
     for (const rawItem of items) {
       const product = await models.Product.findById(rawItem.productId).lean();
-      if (!product) {
-        return res.status(400).json({ error: `Invalid product ${rawItem.productId}` });
-      }
-      if (product.forceOutOfStock) {
-        return res.status(400).json({ error: `${product.name} is currently out of stock` });
-      }
-
-      const quantity = Number(rawItem.quantity);
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
-        return res.status(400).json({ error: "Invalid quantity" });
-      }
-
-      let unitPrice = Number(product.price);
-      let variantName = null;
-      let variantRef = null;
-
-      if (product.variants && product.variants.length && !rawItem.variant) {
-        return res.status(400).json({ error: `Please choose a variant for ${product.name}` });
-      }
-
-      if (rawItem.variant) {
-        const variant = (product.variants || []).find((v) => v.name === rawItem.variant);
-        if (!variant) {
-          return res.status(400).json({ error: `Invalid variant for product ${product.name}` });
-        }
-
-        variantName = variant.name;
-        unitPrice = Number(variant.price);
-        variantRef = variant;
-
-        if (Number(variant.stock || 0) < quantity) {
-          return res.status(400).json({ error: `${product.name} (${variant.name}) is out of stock` });
-        }
-      } else if (Number(product.stock || 0) < quantity) {
-        return res.status(400).json({ error: `${product.name} is out of stock` });
-      }
-
-      const subtotal = unitPrice * quantity;
-      subtotalAmount += subtotal;
-
-      resolvedItems.push({
-        productId: product._id,
-        name: product.name,
-        variant: variantName,
-        variantId: variantRef && variantRef._id ? String(variantRef._id) : null,
-        quantity,
-        unitPrice,
-        subtotal
-      });
+      const resolvedItem = orderLogic.resolveOrderItem(rawItem, product);
+      subtotalAmount += resolvedItem.subtotal;
+      resolvedItems.push(resolvedItem);
     }
 
     const sessionUser = req.session.user;
@@ -2058,16 +2005,22 @@ app.post("/api/orders", requireAuth, async (req, res) => {
     const normalizedContactNumber = String(contactNumber).trim();
     const normalizedPromoCode = String(promoCode || "").trim();
     const { promo, discountAmount } = await validatePromoCode({ promoCode: normalizedPromoCode, subtotalAmount });
-    const taxableAmount = Number((subtotalAmount - discountAmount).toFixed(2));
-    const taxAmount = Number((taxableAmount * TAX_RATE).toFixed(2));
-
-    const grossTotal = Number((taxableAmount + taxAmount + parsedTip).toFixed(2));
-    const walletBalance = Math.max(0, Math.floor(Number(userDoc.walletCoins || 0)));
-    const maxDiscountFromWallet = calculateWalletDiscountFromCoins(walletBalance);
-    const walletDiscountAmount = useWalletCoins ? Math.min(maxDiscountFromWallet, Math.floor(grossTotal)) : 0;
-    const walletCoinsRedeemed = walletDiscountAmount * 50;
-    const finalTotal = Number(Math.max(0, grossTotal - walletDiscountAmount).toFixed(2));
-    const coinsEarned = calculateEarnedCoins(Math.max(0, taxableAmount - walletDiscountAmount));
+    const {
+      taxableAmount,
+      taxAmount,
+      walletBalance,
+      walletDiscountAmount,
+      walletCoinsRedeemed,
+      finalTotal,
+      coinsEarned
+    } = orderLogic.calculateOrderTotals({
+      subtotalAmount,
+      discountAmount,
+      tipAmount: parsedTip,
+      walletCoins: userDoc.walletCoins,
+      useWalletCoins,
+      taxRate: TAX_RATE
+    });
 
     const order = await models.Order.create({
       userId: sessionUser.id,
@@ -2116,27 +2069,8 @@ app.post("/api/orders", requireAuth, async (req, res) => {
     };
 
     for (const item of resolvedItems) {
-      if (item.variantId) {
-        await models.Product.updateOne(
-          { _id: item.productId, "variants._id": item.variantId },
-          {
-            $inc: {
-              "variants.$.stock": -item.quantity,
-              orderCount: item.quantity
-            }
-          }
-        );
-      } else {
-        await models.Product.updateOne(
-          { _id: item.productId },
-          {
-            $inc: {
-              stock: -item.quantity,
-              orderCount: item.quantity
-            }
-          }
-        );
-      }
+      const stockUpdate = orderLogic.buildStockUpdate(item);
+      await models.Product.updateOne(stockUpdate.filter, stockUpdate.update);
     }
 
     if (promo) {
@@ -2201,6 +2135,9 @@ app.post("/api/orders", requireAuth, async (req, res) => {
 
     return;
   } catch (err) {
+    if (err && err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: "Could not create order" });
   }
@@ -2355,7 +2292,6 @@ app.get("/api/admin/orders", requireAnyAdminPermission(["orders", "alerts", "del
 
   const query = {};
   if (status) query.status = status;
-  else query.status = { $ne: "DELIVERED" };
   if (dateFrom || dateTo) {
     query.createdAt = {};
     if (dateFrom) query.createdAt.$gte = dateFrom;
@@ -2483,9 +2419,10 @@ app.post("/api/admin/orders/:id/assign-delivery", requireAdminPermission("delive
 });
 
 app.get("/api/admin/deliveries/my", requireAdminPermission("delivery_agent"), async (req, res) => {
+  const cutoff = new Date(Date.now() - ORDER_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   const orders = await models.Order.find({
     deliveryEmployeeId: req.session.admin.id,
-    status: { $nin: ["DELIVERED", "CANCELED"] }
+    $or: [{ deliveryAssignedAt: { $gte: cutoff } }, { createdAt: { $gte: cutoff } }]
   })
     .sort({ deliveryAssignedAt: -1, createdAt: -1 })
     .select("customerName customerEmail customerPhone deliveryAddress paymentMethod totalAmount status cancelNote createdAt items deliveryAssignedBy deliveryAssignedAt deliveryAcceptedAt deliveryCancelNote")

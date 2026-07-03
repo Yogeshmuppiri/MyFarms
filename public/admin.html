@@ -18,7 +18,7 @@
       </header>
 
       <section id="loginCard" class="card">
-        <h2>Admin Login</h2>
+        <h2>My Farms Administration</h2>
         <form id="adminLoginForm">
           <label>Email</label>
           <input id="adminEmail" type="email" required />
@@ -118,10 +118,10 @@
                 <button type="submit">Create Administrative</button>
               </form>
             </div>
-            <div>
-              <h3>Administrative List</h3>
+            <details class="admin-list-disclosure">
+              <summary>Administrative List</summary>
               <div id="employeeList" class="stack"></div>
-            </div>
+            </details>
           </div>
 
           <h3>Manage Administrative</h3>
@@ -310,12 +310,16 @@
 
         <section class="card" data-permission="delivery_assign">
           <h2>Delivery Assignment</h2>
-          <div class="split">
-            <div>
+          <div class="delivery-assignment-grid">
+            <div class="delivery-panel">
               <h3>Delivery Agents</h3>
-              <div id="deliveryAgentsList" class="stack"></div>
+              <div id="deliveryAgentsList" class="agent-grid"></div>
             </div>
-            <div>
+            <div class="delivery-panel">
+              <h3>Unassigned Deliveries</h3>
+              <div id="unassignedDeliveryList" class="stack"></div>
+            </div>
+            <div class="delivery-panel">
               <h3>Assign Order</h3>
               <form id="deliveryAssignForm" class="grid-form">
                 <label>Order</label>
