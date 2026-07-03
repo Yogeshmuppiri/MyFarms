@@ -66,6 +66,7 @@ export default function App() {
 
   const [showAuth, setShowAuth] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState(1);
   const [showForgot, setShowForgot] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
@@ -75,6 +76,7 @@ export default function App() {
   const [showMenuOrders, setShowMenuOrders] = useState(false);
   const [accountPanel, setAccountPanel] = useState(null);
   const [showComplaint, setShowComplaint] = useState(false);
+  const [managingOrder, setManagingOrder] = useState(null);
   const [expandedOrders, setExpandedOrders] = useState({});
   const [heroCarouselIndex, setHeroCarouselIndex] = useState(0);
   const [promoCarouselIndex, setPromoCarouselIndex] = useState(0);
@@ -215,6 +217,7 @@ export default function App() {
       return { ...item, offset };
     }).sort((a, b) => Math.abs(b.offset) - Math.abs(a.offset));
   }, [heroCarouselIndex, heroShowcaseSource]);
+  const trackedOrders = useMemo(() => (orders || []).filter((order) => order.canTrack).slice(0, 4), [orders]);
 
   const activePromo = livePromos.length ? livePromos[promoCarouselIndex % livePromos.length] : null;
 
@@ -1372,7 +1375,49 @@ export default function App() {
       fullName: prev.fullName || currentUser.name || "",
       contactNumber: prev.contactNumber || currentUser.mobileNumber || ""
     }));
+    setCheckoutStep(1);
     setShowCheckout(true);
+  }
+
+  function closeCheckoutFlow() {
+    setShowCheckout(false);
+    setCheckoutStep(1);
+  }
+
+  function canContinueCheckoutStep(step = checkoutStep, showMessage = true) {
+    if (step === 1) {
+      if (String(checkout.fullName || "").trim().length < 2) {
+        if (showMessage) showToast("Please enter full name");
+        return false;
+      }
+      if (!/^\d{10}$/.test(String(checkout.contactNumber || "").trim())) {
+        if (showMessage) showToast("Please enter a valid 10-digit mobile number");
+        return false;
+      }
+      if (checkout.paymentMethod !== "PICKUP" && String(checkout.address || "").trim().length < 8) {
+        if (showMessage) showToast("Please enter delivery address");
+        return false;
+      }
+    }
+
+    if (step === 2) {
+      const tip = Number(checkout.tipAmount || 0);
+      if (!["COD", "PICKUP"].includes(checkout.paymentMethod)) {
+        if (showMessage) showToast("Select payment method");
+        return false;
+      }
+      if (!Number.isFinite(tip) || tip < 0 || tip > 5000) {
+        if (showMessage) showToast("Tip should be between 0 and 5000");
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  function goToNextCheckoutStep() {
+    if (!canContinueCheckoutStep(checkoutStep)) return;
+    setCheckoutStep((step) => Math.min(step + 1, 3));
   }
 
   function startVoiceSearch() {
@@ -1619,6 +1664,93 @@ export default function App() {
         return Array.from(map.values());
       });
       showToast("Items added to cart from order history");
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  function openManageOrder(order) {
+    setManagingOrder({
+      ...order,
+      editItems: (order.items || []).map((item) => ({
+        productId: item.productId,
+        productName: item.productName,
+        variantName: item.variantName || null,
+        quantity: Number(item.quantity || 1)
+      }))
+    });
+  }
+
+  function updateManagingOrderQuantity(index, delta) {
+    setManagingOrder((current) => {
+      if (!current) return current;
+      const editItems = current.editItems
+        .map((item, itemIndex) => itemIndex === index ? { ...item, quantity: Math.max(0, Number(item.quantity || 0) + delta) } : item)
+        .filter((item) => item.quantity > 0);
+      return { ...current, editItems };
+    });
+  }
+
+  function addCartToManagingOrder() {
+    if (!cart.length) {
+      showToast("Cart is empty");
+      return;
+    }
+    setManagingOrder((current) => {
+      if (!current) return current;
+      const map = new Map((current.editItems || []).map((item) => [`${item.productId}::${item.variantName || ""}`, { ...item }]));
+      for (const item of cart) {
+        const key = `${item.productId}::${item.variant || ""}`;
+        if (map.has(key)) map.get(key).quantity += Number(item.quantity || 1);
+        else {
+          map.set(key, {
+            productId: item.productId,
+            productName: item.name,
+            variantName: item.variant || null,
+            quantity: Number(item.quantity || 1)
+          });
+        }
+      }
+      return { ...current, editItems: Array.from(map.values()) };
+    });
+    showToast("Cart items added to order draft");
+  }
+
+  async function saveManagedOrder() {
+    if (!managingOrder) return;
+    const items = (managingOrder.editItems || []).filter((item) => Number(item.quantity || 0) > 0);
+    if (!items.length) {
+      showToast("Order must have at least one item");
+      return;
+    }
+
+    try {
+      await api(`/api/orders/${managingOrder.id}/items`, {
+        method: "PUT",
+        body: JSON.stringify({
+          items: items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            variant: item.variantName || null
+          }))
+        })
+      });
+      showToast("Order modified");
+      setManagingOrder(null);
+      await Promise.all([loadOrders(), loadProducts(), loadWallet()]);
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  async function cancelCustomerOrder(orderId) {
+    const confirmed = window.confirm("Cancel this order? This is available only within 2 hours of placing it.");
+    if (!confirmed) return;
+    try {
+      await api(`/api/orders/${orderId}/cancel`, { method: "POST" });
+      showToast("Order canceled");
+      setManagingOrder(null);
+      await Promise.all([loadOrders(), loadProducts(), loadWallet()]);
     } catch (err) {
       showToast(err.message);
     }
@@ -2608,6 +2740,39 @@ export default function App() {
 
       </main>
 
+      {trackedOrders.length ? (
+        <section className="order-tracker-dock" aria-label="Active order tracking">
+          <div className="order-tracker-head">
+            <div>
+              <strong>Track Recent Active Orders</strong>
+              <p className="order-tracker-note">
+                Orders can be managed or canceled within 2 hours of placement. Delivered orders are available under order history.
+              </p>
+            </div>
+            <button className="btn-ghost small" type="button" onClick={() => openAccountPanel("orders")}>
+              View All
+            </button>
+          </div>
+          <div className="order-tracker-list">
+            {trackedOrders.map((order) => (
+              <article className="order-tracker-card" key={`tracker-${order.id}`}>
+                <div>
+                  <strong>#{order.id.slice(-6).toUpperCase()}</strong>
+                  {order.modifiedAt ? <span className="modified-pill">Modified</span> : null}
+                </div>
+                <span>{statusLabel(order.status)}</span>
+                <small>Rs.{Number(order.totalAmount || 0).toFixed(2)}</small>
+                {order.canManage ? (
+                  <button className="btn-ghost small" type="button" onClick={() => openManageOrder(order)}>
+                    Manage
+                  </button>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <footer className="brand-footer">
         <img src="/assets/images/myfarmslogo.png" alt="My Farms logo" />
         <div>
@@ -3227,106 +3392,166 @@ export default function App() {
       {showCheckout ? (
         <div className="modal">
           <div className="modal-card checkout-modal">
-            <button className="close-btn" onClick={() => setShowCheckout(false)}>x</button>
+            <button className="close-btn" onClick={closeCheckoutFlow}>x</button>
             <h3>Checkout</h3>
             <div className="checkout-steps">
-              <span className={checkout.fullName && checkout.contactNumber ? "active" : ""}>1. Details</span>
-              <span className={checkout.paymentMethod ? "active" : ""}>2. Delivery</span>
-              <span className={cart.length ? "active" : ""}>3. Review</span>
+              <button type="button" className={checkoutStep === 1 ? "active" : checkoutStep > 1 ? "complete" : ""} onClick={() => setCheckoutStep(1)}>
+                <strong>1</strong>
+                <span>Address</span>
+              </button>
+              <button
+                type="button"
+                className={checkoutStep === 2 ? "active" : checkoutStep > 2 ? "complete" : ""}
+                onClick={() => {
+                  if (canContinueCheckoutStep(1)) setCheckoutStep(2);
+                }}
+              >
+                <strong>2</strong>
+                <span>Payment</span>
+              </button>
+              <button
+                type="button"
+                className={checkoutStep === 3 ? "active" : ""}
+                onClick={() => {
+                  if (canContinueCheckoutStep(1) && canContinueCheckoutStep(2)) setCheckoutStep(3);
+                }}
+              >
+                <strong>3</strong>
+                <span>Review</span>
+              </button>
             </div>
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                await placeOrder();
+                if (checkoutStep < 3) {
+                  goToNextCheckoutStep();
+                  return;
+                }
+                if (canContinueCheckoutStep(1) && canContinueCheckoutStep(2)) {
+                  await placeOrder();
+                }
               }}
             >
-              <div className="field">
-                <label>Full Name</label>
-                <input
-                  value={checkout.fullName}
-                  onChange={(e) => setCheckout((s) => ({ ...s, fullName: e.target.value }))}
-                  type="text"
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Contact Number</label>
-                <input
-                  value={checkout.contactNumber}
-                  onChange={(e) => {
-                    const digitsOnly = e.target.value.replace(/\D/g, "").slice(0, 10);
-                    setCheckout((s) => ({ ...s, contactNumber: digitsOnly }));
-                  }}
-                  type="tel"
-                  inputMode="numeric"
-                  pattern="\d{10}"
-                  maxLength={10}
-                  required
-                  placeholder="Enter 10-digit mobile number"
-                />
-              </div>
-              <div className="field">
-                <label>Tip For Delivery (Optional)</label>
-                <input
-                  value={checkout.tipAmount}
-                  onChange={(e) => setCheckout((s) => ({ ...s, tipAmount: e.target.value }))}
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="e.g. 20"
-                />
-              </div>
-              <div className="field">
-                <label>Promo Code</label>
-                <input
-                  value={checkout.promoCode}
-                  onChange={(e) => setCheckout((s) => ({ ...s, promoCode: sanitizePromoCode(e.target.value) }))}
-                  type="text"
-                  placeholder="Enter promo code"
-                />
-                <button className="btn-ghost" type="button" onClick={applyPromoCode}>Apply Promo</button>
-                <div className="small muted">
-                  {promoPreview.message || "Promo will be validated at checkout"}
-                </div>
-              </div>
-              <label className="wallet-checkout-option">
-                <input
-                  type="checkbox"
-                  checked={checkout.useWalletCoins}
-                  disabled={!walletBalance}
-                  onChange={(e) => setCheckout((s) => ({ ...s, useWalletCoins: e.target.checked }))}
-                />
-                <span>
-                  Use wallet coins
-                  <small>
-                    {walletBalance
-                      ? `${walletBalance} coins available. This order can use ${walletCoinsUsedEstimate || Math.min(walletBalance, Math.floor(checkoutTotalBeforeWallet) * WALLET_COINS_PER_RUPEE)} coins for Rs.${walletRedeemEstimate || Math.min(walletDiscountCapacity, Math.floor(checkoutTotalBeforeWallet))} off.`
-                      : "No wallet coins available yet."}
-                  </small>
-                </span>
-              </label>
-              <div className="field">
-                <label>Payment Method</label>
-                <select
-                  value={checkout.paymentMethod}
-                  onChange={(e) => setCheckout((s) => ({ ...s, paymentMethod: e.target.value }))}
-                  required
-                >
-                  <option value="COD">Cash On Delivery</option>
-                  <option value="PICKUP">Store Pickup</option>
-                </select>
-              </div>
-              {checkout.paymentMethod !== "PICKUP" ? (
-                <div className="field">
-                  <label>Delivery Address</label>
-                  <textarea
-                    value={checkout.address}
-                    onChange={(e) => setCheckout((s) => ({ ...s, address: e.target.value }))}
-                    rows="3"
-                    placeholder="House no, street, area, city, pincode"
-                  />
-                </div>
+              {checkoutStep === 1 ? (
+                <section className="checkout-step-panel">
+                  <div className="field">
+                    <label>Full Name</label>
+                    <input
+                      value={checkout.fullName}
+                      onChange={(e) => setCheckout((s) => ({ ...s, fullName: e.target.value }))}
+                      type="text"
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Contact Number</label>
+                    <input
+                      value={checkout.contactNumber}
+                      onChange={(e) => {
+                        const digitsOnly = e.target.value.replace(/\D/g, "").slice(0, 10);
+                        setCheckout((s) => ({ ...s, contactNumber: digitsOnly }));
+                      }}
+                      type="tel"
+                      inputMode="numeric"
+                      pattern="\d{10}"
+                      maxLength={10}
+                      required
+                      placeholder="Enter 10-digit mobile number"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Delivery Option</label>
+                    <select
+                      value={checkout.paymentMethod}
+                      onChange={(e) => setCheckout((s) => ({ ...s, paymentMethod: e.target.value }))}
+                      required
+                    >
+                      <option value="COD">Home Delivery</option>
+                      <option value="PICKUP">Store Pickup</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Delivery Address</label>
+                    <textarea
+                      value={checkout.address}
+                      onChange={(e) => setCheckout((s) => ({ ...s, address: e.target.value }))}
+                      rows="3"
+                      disabled={checkout.paymentMethod === "PICKUP"}
+                      placeholder={checkout.paymentMethod === "PICKUP" ? "Store pickup selected" : "House no, street, area, city, pincode"}
+                    />
+                  </div>
+                </section>
               ) : null}
+
+              {checkoutStep === 2 ? (
+                <section className="checkout-step-panel">
+                  <div className="field">
+                    <label>Tip For Delivery (Optional)</label>
+                    <input
+                      value={checkout.tipAmount}
+                      onChange={(e) => setCheckout((s) => ({ ...s, tipAmount: e.target.value }))}
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="e.g. 20"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Promo Code</label>
+                    <input
+                      value={checkout.promoCode}
+                      onChange={(e) => setCheckout((s) => ({ ...s, promoCode: sanitizePromoCode(e.target.value) }))}
+                      type="text"
+                      placeholder="Enter promo code"
+                    />
+                    <button className="btn-ghost" type="button" onClick={applyPromoCode}>Apply Promo</button>
+                    <div className="small muted">
+                      {promoPreview.message || "Promo will be validated at checkout"}
+                    </div>
+                  </div>
+                  <label className="wallet-checkout-option">
+                    <input
+                      type="checkbox"
+                      checked={checkout.useWalletCoins}
+                      disabled={!walletBalance}
+                      onChange={(e) => setCheckout((s) => ({ ...s, useWalletCoins: e.target.checked }))}
+                    />
+                    <span>
+                      Use wallet coins
+                      <small>
+                        {walletBalance
+                          ? `${walletBalance} coins available. This order can use ${walletCoinsUsedEstimate || Math.min(walletBalance, Math.floor(checkoutTotalBeforeWallet) * WALLET_COINS_PER_RUPEE)} coins for Rs.${walletRedeemEstimate || Math.min(walletDiscountCapacity, Math.floor(checkoutTotalBeforeWallet))} off.`
+                          : "No wallet coins available yet."}
+                      </small>
+                    </span>
+                  </label>
+                </section>
+              ) : null}
+
+              {checkoutStep === 3 ? (
+                <section className="checkout-step-panel">
+                  <div className="checkout-review-box">
+                    <strong>Delivery</strong>
+                    <span>{checkout.fullName} | {checkout.contactNumber}</span>
+                    <span>{checkout.paymentMethod === "PICKUP" ? "Store Pickup" : checkout.address}</span>
+                  </div>
+                  <div className="checkout-review-box">
+                    <strong>Items</strong>
+                    {cart.map((item) => (
+                      <span key={`checkout-review-${item.key}`}>
+                        {item.name}{item.variant ? ` (${item.variant})` : ""} x {item.quantity}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="checkout-review-box">
+                    <strong>Payment</strong>
+                    <span>{checkout.paymentMethod === "COD" ? "Cash On Delivery" : "Store Pickup"}</span>
+                    {promoPreview.valid ? <span>Promo: {promoPreview.code}</span> : null}
+                    {checkout.useWalletCoins ? <span>Wallet discount: Rs.{walletRedeemEstimate.toFixed(2)}</span> : null}
+                  </div>
+                </section>
+              ) : null}
+
               <div className="card-summary">
                 <div className="total-row">
                   <span>Subtotal</span>
@@ -3356,16 +3581,25 @@ export default function App() {
                   You will earn {coinsEarnEstimate} coin{coinsEarnEstimate === 1 ? "" : "s"} from this order.
                 </div>
               </div>
-              <button className="btn-primary" type="submit" disabled={isPlacingOrder}>
-                {isPlacingOrder ? (
-                  <span className="btn-loading">
-                    <span className="spinner" />
-                    Placing Order...
-                  </span>
-                ) : (
-                  "Place Order"
-                )}
-              </button>
+              <div className="checkout-actions">
+                {checkoutStep > 1 ? (
+                  <button className="btn-ghost" type="button" onClick={() => setCheckoutStep((step) => Math.max(step - 1, 1))}>
+                    Back
+                  </button>
+                ) : null}
+                <button className="btn-primary" type="submit" disabled={isPlacingOrder}>
+                  {isPlacingOrder ? (
+                    <span className="btn-loading">
+                      <span className="spinner" />
+                      Placing Order...
+                    </span>
+                  ) : checkoutStep < 3 ? (
+                    "Next"
+                  ) : (
+                    "Place Order"
+                  )}
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -3431,6 +3665,11 @@ export default function App() {
                     <div className={`order-card ${isDeliveredStatus(o.status) ? "order-card-delivered" : "order-card-pending"}`} key={`panel-${o.id}`}>
                       <strong>Order #{o.id.slice(-6).toUpperCase()}</strong>
                       <div className="small muted">{new Date(o.createdAt).toLocaleString()}</div>
+                      {o.modifiedAt ? (
+                        <div className="small">
+                          <span className="modified-pill">Modified</span> {new Date(o.modifiedAt).toLocaleString()}
+                        </div>
+                      ) : null}
                       <div className="small">
                         Status:{" "}
                         <span className={`order-status-pill ${isDeliveredStatus(o.status) ? "is-delivered" : "is-pending"}`}>
@@ -3451,6 +3690,12 @@ export default function App() {
                           {expandedOrders[o.id] ? "Hide Items" : "View Items"}
                         </button>
                         <button className="btn-ghost small" onClick={() => reorderOrder(o.id)}>Reorder</button>
+                        {o.canManage ? (
+                          <>
+                            <button className="btn-ghost small" onClick={() => openManageOrder(o)}>Manage Order</button>
+                            <button className="btn-ghost small danger" onClick={() => cancelCustomerOrder(o.id)}>Cancel Order</button>
+                          </>
+                        ) : null}
                         <button
                           className="btn-ghost small"
                           onClick={() => {
@@ -3517,6 +3762,63 @@ export default function App() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {managingOrder ? (
+        <div
+          className="modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setManagingOrder(null);
+          }}
+        >
+          <div className="modal-card manage-order-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={() => setManagingOrder(null)}>x</button>
+            <p className="kicker">Manage Order</p>
+            <h3>Order #{managingOrder.id.slice(-6).toUpperCase()}</h3>
+            <p className="muted small">
+              Available until{" "}
+              {managingOrder.manageExpiresAt
+                ? new Date(managingOrder.manageExpiresAt).toLocaleString()
+                : "the manage window closes"}
+              .
+            </p>
+
+            <div className="manage-order-list">
+              {(managingOrder.editItems || []).length ? (
+                managingOrder.editItems.map((item, index) => (
+                  <div
+                    className="manage-order-row"
+                    key={`manage-${item.productId}-${item.variantName || "base"}-${index}`}
+                  >
+                    <div>
+                      <strong>{item.productName}</strong>
+                      {item.variantName ? <div className="small muted">{item.variantName}</div> : null}
+                    </div>
+                    <div className="qty-controls">
+                      <button type="button" onClick={() => updateManagingOrderQuantity(index, -1)}>-</button>
+                      <span>{item.quantity}</span>
+                      <button type="button" onClick={() => updateManagingOrderQuantity(index, 1)}>+</button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="muted small">No items selected.</p>
+              )}
+            </div>
+
+            <div className="manage-order-actions">
+              <button className="btn-ghost" type="button" onClick={addCartToManagingOrder}>
+                Add Current Cart Items
+              </button>
+              <button className="btn-ghost danger" type="button" onClick={() => cancelCustomerOrder(managingOrder.id)}>
+                Cancel Order
+              </button>
+              <button className="btn-primary" type="button" onClick={saveManagedOrder}>
+                Save Changes
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

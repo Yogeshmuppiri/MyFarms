@@ -139,6 +139,14 @@ let orderPollInitialized = false;
 let panelAccordionInitialized = false;
 let orderAlerts = [];
 const ADMIN_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const ADMIN_NAV_GROUPS = [
+  { key: "sales", label: "Sales" },
+  { key: "inventory", label: "Inventory" },
+  { key: "delivery", label: "Delivery" },
+  { key: "administration", label: "Administration" },
+  { key: "support", label: "Support" }
+];
+let activeAdminGroup = "sales";
 
 async function api(path, options = {}) {
   try {
@@ -237,6 +245,53 @@ function applyPermissionVisibility() {
     const permission = section.dataset.permission;
     section.classList.toggle("hidden", !hasPermission(permission));
   });
+  updateAdminGroupNavigation();
+}
+
+function resolveAdminSectionGroup(title, permission) {
+  if (["alerts", "dashboard", "orders", "promos"].includes(permission)) return "sales";
+  if (["products", "stock", "inventory_alerts"].includes(permission)) return "inventory";
+  if (["delivery_assign", "delivery_supervisor", "delivery_agent"].includes(permission)) return "delivery";
+  if (permission === "administration" || title === "Account Security") return "administration";
+  if (permission === "complaints") return "support";
+  return "sales";
+}
+
+function updateAdminGroupNavigation() {
+  if (!panelAccordionInitialized || !els.panelCard) return;
+  const sections = Array.from(document.querySelectorAll("#panelCard > section.card"));
+  const nav = document.getElementById("adminGroupNav");
+  if (!nav) return;
+  const visibleGroups = new Set(
+    sections
+      .filter((section) => !section.classList.contains("hidden"))
+      .map((section) => section.dataset.adminGroup)
+      .filter(Boolean)
+  );
+
+  if (!visibleGroups.has(activeAdminGroup)) {
+    activeAdminGroup = ADMIN_NAV_GROUPS.find((group) => visibleGroups.has(group.key))?.key || "sales";
+  }
+
+  nav.querySelectorAll("button[data-admin-group]").forEach((btn) => {
+    const group = btn.dataset.adminGroup;
+    btn.classList.toggle("active", group === activeAdminGroup);
+    btn.classList.toggle("hidden", !visibleGroups.has(group));
+  });
+
+  sections.forEach((section) => {
+    section.classList.toggle("admin-group-hidden", section.dataset.adminGroup !== activeAdminGroup);
+  });
+
+  const activeVisibleSections = sections.filter(
+    (section) =>
+      section.dataset.adminGroup === activeAdminGroup &&
+      !section.classList.contains("hidden") &&
+      !section.classList.contains("admin-group-hidden")
+  );
+  if (activeVisibleSections.length && !activeVisibleSections.some((section) => section.classList.contains("expanded"))) {
+    activeVisibleSections[0].classList.add("expanded");
+  }
 }
 
 function availablePermissionsForRole(role) {
@@ -359,6 +414,7 @@ function setupPanelAccordion() {
   sections.forEach((section, idx) => {
     const heading = section.querySelector("h2");
     const title = heading ? heading.textContent.trim() : `Section ${idx + 1}`;
+    section.dataset.adminGroup = resolveAdminSectionGroup(title, section.dataset.permission || "");
     if (heading) heading.remove();
 
     const body = document.createElement("div");
@@ -382,7 +438,28 @@ function setupPanelAccordion() {
     };
   });
 
+  const nav = document.createElement("nav");
+  nav.id = "adminGroupNav";
+  nav.className = "admin-group-nav";
+  nav.setAttribute("aria-label", "Admin tool groups");
+  nav.innerHTML = ADMIN_NAV_GROUPS.map(
+    (group) => `<button type="button" data-admin-group="${group.key}">${group.label}</button>`
+  ).join("");
+  els.panelCard.insertBefore(nav, els.panelCard.firstChild);
+  nav.querySelectorAll("button[data-admin-group]").forEach((btn) => {
+    btn.onclick = () => {
+      activeAdminGroup = btn.dataset.adminGroup;
+      sections.forEach((section) => section.classList.remove("expanded"));
+      const firstSection = sections.find(
+        (section) => section.dataset.adminGroup === activeAdminGroup && !section.classList.contains("hidden")
+      );
+      if (firstSection) firstSection.classList.add("expanded");
+      updateAdminGroupNavigation();
+    };
+  });
+
   panelAccordionInitialized = true;
+  updateAdminGroupNavigation();
 }
 
 function openPanelSectionByContentId(contentId) {
@@ -390,6 +467,8 @@ function openPanelSectionByContentId(contentId) {
   if (!body) return;
   const section = body.closest("#panelCard > section.card");
   if (!section) return;
+  if (section.dataset.adminGroup) activeAdminGroup = section.dataset.adminGroup;
+  updateAdminGroupNavigation();
   const all = Array.from(document.querySelectorAll("#panelCard > section.card"));
   all.forEach((s) => s.classList.remove("expanded"));
   section.classList.add("expanded");
@@ -613,6 +692,7 @@ async function renderOrders() {
           <span class="tag">${statusLabel(o.status)}</span>
         </div>
         <div class="meta">${new Date(o.createdAt).toLocaleString()}</div>
+        ${o.modifiedAt ? `<div class="meta"><span class="tag">Modified</span> ${new Date(o.modifiedAt).toLocaleString()}</div>` : ""}
         <div class="meta">Customer: ${o.customerName} | ${o.customerEmail} | ${o.customerPhone}</div>
         <div class="meta">Payment: ${o.paymentMethod} | Total: Rs.${Number(o.totalAmount).toFixed(2)}</div>
         <div class="meta">Address: ${o.deliveryAddress}</div>

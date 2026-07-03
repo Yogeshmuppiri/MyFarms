@@ -73,6 +73,8 @@ const orderSchema = new mongoose.Schema(
     totalAmount: { type: Number, required: true },
     status: { type: String, default: "PLACED" },
     cancelNote: { type: String, default: null },
+    modifiedAt: { type: Date, default: null },
+    modifiedCount: { type: Number, default: 0, min: 0 },
     deliveryEmployeeId: { type: mongoose.Schema.Types.ObjectId, ref: "AdministrativeEmployee", default: null },
     deliveryAssignedBy: { type: String, default: null },
     deliveryAssignedAt: { type: Date, default: null },

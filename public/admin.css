@@ -64,6 +64,39 @@ body::before {
   overflow: hidden;
 }
 
+.admin-group-nav {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+  padding: 0.55rem;
+  border: 1px solid #d7e4d2;
+  border-radius: 12px;
+  background: rgba(248, 252, 247, 0.96);
+  box-shadow: 0 8px 18px rgba(31, 76, 44, 0.08);
+}
+
+.admin-group-nav button {
+  background: transparent;
+  color: #244d2f;
+  border: 1px solid #cfe0cb;
+  border-radius: 999px;
+  padding: 0.55rem 0.8rem;
+}
+
+.admin-group-nav button.active {
+  background: #2f6b3f;
+  border-color: #2f6b3f;
+  color: #fff;
+}
+
+#panelCard > .card.admin-group-hidden {
+  display: none;
+}
+
 #panelCard > .card .card-toggle {
   width: 100%;
   border: 0;

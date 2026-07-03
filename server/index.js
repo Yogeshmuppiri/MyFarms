@@ -41,6 +41,8 @@ const ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const TAX_RATE = 0.05;
 const ORDER_RETENTION_DAYS = 60;
 const COMPLAINT_RETENTION_DAYS = 30;
+const ORDER_MANAGE_WINDOW_MS = 2 * 60 * 60 * 1000;
+const CUSTOMER_TRACK_DELIVERED_MS = 48 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 10);
 const MongoStore = MongoStoreModule && MongoStoreModule.default ? MongoStoreModule.default : MongoStoreModule;
 
@@ -656,6 +658,89 @@ async function validatePromoCode({ promoCode, subtotalAmount }) {
 
   const discountAmount = Number(((subtotalAmount * promo.discountPercent) / 100).toFixed(2));
   return { promo, discountAmount };
+}
+
+function getOrderManageInfo(order) {
+  const createdAt = order?.createdAt ? new Date(order.createdAt).getTime() : 0;
+  const expiresAtMs = createdAt + ORDER_MANAGE_WINDOW_MS;
+  const status = String(order?.status || "");
+  const canManage = ["PLACED", "ASSIGNED"].includes(status) && Date.now() <= expiresAtMs;
+  return {
+    canManage,
+    manageExpiresAt: createdAt ? new Date(expiresAtMs) : null
+  };
+}
+
+function getCustomerTrackInfo(order) {
+  const deliveredAt = order?.deliveryCompletedAt ? new Date(order.deliveryCompletedAt).getTime() : 0;
+  const canTrack =
+    !["DELIVERED", "CANCELED"].includes(String(order?.status || "")) ||
+    (String(order?.status || "") === "DELIVERED" && deliveredAt && Date.now() - deliveredAt <= CUSTOMER_TRACK_DELIVERED_MS);
+  return {
+    canTrack,
+    trackUntil: deliveredAt ? new Date(deliveredAt + CUSTOMER_TRACK_DELIVERED_MS) : null
+  };
+}
+
+async function restoreOrderStock(items) {
+  for (const item of items || []) {
+    const quantity = Number(item.quantity || 0);
+    if (!quantity) continue;
+    if (item.variantName) {
+      await models.Product.updateOne(
+        { _id: item.productId, "variants.name": item.variantName },
+        { $inc: { "variants.$.stock": quantity, orderCount: -quantity } }
+      );
+    } else {
+      await models.Product.updateOne(
+        { _id: item.productId },
+        { $inc: { stock: quantity, orderCount: -quantity } }
+      );
+    }
+  }
+}
+
+async function decrementSavedOrderStock(items) {
+  for (const item of items || []) {
+    const quantity = Number(item.quantity || 0);
+    if (!quantity) continue;
+    if (item.variantName) {
+      await models.Product.updateOne(
+        { _id: item.productId, "variants.name": item.variantName },
+        { $inc: { "variants.$.stock": -quantity, orderCount: quantity } }
+      );
+    } else {
+      await models.Product.updateOne(
+        { _id: item.productId },
+        { $inc: { stock: -quantity, orderCount: quantity } }
+      );
+    }
+  }
+}
+
+async function resolveOrderItemsForUpdate(items) {
+  if (!Array.isArray(items) || !items.length) {
+    throw createBadRequestError("Order must have at least one item");
+  }
+
+  const resolvedItems = [];
+  let subtotalAmount = 0;
+
+  for (const rawItem of items) {
+    const product = await models.Product.findById(rawItem.productId).lean();
+    const resolvedItem = orderLogic.resolveOrderItem(rawItem, product);
+    subtotalAmount += resolvedItem.subtotal;
+    resolvedItems.push(resolvedItem);
+  }
+
+  return { resolvedItems, subtotalAmount };
+}
+
+async function applyOrderStockDecrement(items) {
+  for (const item of items) {
+    const stockUpdate = orderLogic.buildStockUpdate(item);
+    await models.Product.updateOne(stockUpdate.filter, stockUpdate.update);
+  }
 }
 
 async function callRoboflowModel({ apiBaseUrl, modelId, apiKey, image }) {
@@ -2135,33 +2220,44 @@ app.get("/api/orders/my", requireAuth, async (req, res) => {
   await cleanupOldOrders();
   const orders = await models.Order.find({ userId: req.session.user.id })
     .sort({ createdAt: -1 })
-    .select("deliveryAddress paymentMethod subtotalAmount discountAmount walletCoinsRedeemed walletDiscountAmount coinsEarned taxAmount tipAmount totalAmount status cancelNote createdAt promoCode items")
+    .select("deliveryAddress paymentMethod subtotalAmount discountAmount walletCoinsRedeemed walletDiscountAmount coinsEarned taxAmount tipAmount totalAmount status cancelNote createdAt promoCode items modifiedAt modifiedCount deliveryCompletedAt")
     .lean();
 
   res.json({
-    orders: orders.map((o) => ({
-      id: String(o._id),
-      deliveryAddress: o.deliveryAddress,
-      paymentMethod: o.paymentMethod,
-      subtotalAmount: o.subtotalAmount || 0,
-      discountAmount: o.discountAmount || 0,
-      walletCoinsRedeemed: o.walletCoinsRedeemed || 0,
-      walletDiscountAmount: o.walletDiscountAmount || 0,
-      coinsEarned: o.coinsEarned || 0,
-      taxAmount: o.taxAmount || 0,
-      tipAmount: o.tipAmount || 0,
-      promoCode: o.promoCode || null,
-      totalAmount: o.totalAmount,
-      status: o.status,
-      cancelNote: o.cancelNote || null,
-      createdAt: o.createdAt,
-      items: (o.items || []).map((it) => ({
-        productId: String(it.productId),
-        productName: it.productName,
-        variantName: it.variantName,
-        quantity: it.quantity
-      }))
-    }))
+    orders: orders.map((o) => {
+      const manageInfo = getOrderManageInfo(o);
+      const trackInfo = getCustomerTrackInfo(o);
+      return {
+        id: String(o._id),
+        deliveryAddress: o.deliveryAddress,
+        paymentMethod: o.paymentMethod,
+        subtotalAmount: o.subtotalAmount || 0,
+        discountAmount: o.discountAmount || 0,
+        walletCoinsRedeemed: o.walletCoinsRedeemed || 0,
+        walletDiscountAmount: o.walletDiscountAmount || 0,
+        coinsEarned: o.coinsEarned || 0,
+        taxAmount: o.taxAmount || 0,
+        tipAmount: o.tipAmount || 0,
+        promoCode: o.promoCode || null,
+        totalAmount: o.totalAmount,
+        status: o.status,
+        cancelNote: o.cancelNote || null,
+        createdAt: o.createdAt,
+        modifiedAt: o.modifiedAt || null,
+        modifiedCount: o.modifiedCount || 0,
+        canManage: manageInfo.canManage,
+        manageExpiresAt: manageInfo.manageExpiresAt,
+        canTrack: trackInfo.canTrack,
+        trackUntil: trackInfo.trackUntil,
+        items: (o.items || []).map((it) => ({
+          productId: String(it.productId),
+          productName: it.productName,
+          variantName: it.variantName,
+          unitPrice: it.unitPrice,
+          quantity: it.quantity
+        }))
+      };
+    })
   });
 });
 
@@ -2176,6 +2272,131 @@ app.post("/api/orders/:id/reorder", requireAuth, async (req, res) => {
   }));
 
   res.json({ ok: true, items });
+});
+
+app.post("/api/orders/:id/cancel", requireAuth, async (req, res) => {
+  try {
+    const order = await models.Order.findOne({ _id: req.params.id, userId: req.session.user.id });
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    const manageInfo = getOrderManageInfo(order);
+    if (!manageInfo.canManage) {
+      return res.status(400).json({ error: "Order can be canceled only within 2 hours while it is not out for delivery" });
+    }
+
+    await restoreOrderStock(order.items || []);
+    order.status = "CANCELED";
+    order.cancelNote = "Canceled by customer within manage window";
+    order.modifiedAt = new Date();
+    order.modifiedCount = Number(order.modifiedCount || 0) + 1;
+    await order.save();
+
+    let walletBalance = null;
+    const user = await models.User.findById(req.session.user.id).select("walletCoins");
+    if (user) {
+      const currentBalance = Math.max(0, Math.floor(Number(user.walletCoins || 0)));
+      walletBalance = Math.max(0, currentBalance + Number(order.walletCoinsRedeemed || 0) - Number(order.coinsEarned || 0));
+      user.walletCoins = walletBalance;
+      await user.save();
+      req.session.user = { ...req.session.user, walletCoins: walletBalance };
+    }
+
+    res.json({ ok: true, status: order.status, walletBalance });
+  } catch (err) {
+    console.error("Failed to cancel customer order:", err.message);
+    res.status(500).json({ error: "Could not cancel order" });
+  }
+});
+
+app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
+  let originalItems = null;
+  let restoredOriginalStock = false;
+  let appliedNewStock = false;
+  try {
+    const order = await models.Order.findOne({ _id: req.params.id, userId: req.session.user.id });
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    const manageInfo = getOrderManageInfo(order);
+    if (!manageInfo.canManage) {
+      return res.status(400).json({ error: "Order can be modified only within 2 hours while it is not out for delivery" });
+    }
+
+    originalItems = (order.items || []).map((item) => item.toObject ? item.toObject() : item);
+    await restoreOrderStock(order.items || []);
+    restoredOriginalStock = true;
+    const { resolvedItems, subtotalAmount } = await resolveOrderItemsForUpdate(req.body.items);
+    const { promo, discountAmount } = await validatePromoCode({ promoCode: order.promoCode || "", subtotalAmount });
+    const previousWalletCoinsRedeemed = Number(order.walletCoinsRedeemed || 0);
+    const totals = orderLogic.calculateOrderTotals({
+      subtotalAmount,
+      discountAmount,
+      tipAmount: order.tipAmount,
+      walletCoins: order.walletCoinsRedeemed,
+      useWalletCoins: Number(order.walletCoinsRedeemed || 0) > 0,
+      taxRate: TAX_RATE
+    });
+
+    await applyOrderStockDecrement(resolvedItems);
+    appliedNewStock = true;
+
+    const previousCoinsEarned = Number(order.coinsEarned || 0);
+    order.subtotalAmount = Number(subtotalAmount.toFixed(2));
+    order.promoCode = promo ? promo.code : null;
+    order.discountAmount = discountAmount;
+    order.walletDiscountAmount = totals.walletDiscountAmount;
+    order.walletCoinsRedeemed = totals.walletCoinsRedeemed;
+    order.coinsEarned = totals.coinsEarned;
+    order.taxAmount = totals.taxAmount;
+    order.totalAmount = totals.finalTotal;
+    order.modifiedAt = new Date();
+    order.modifiedCount = Number(order.modifiedCount || 0) + 1;
+    order.items = resolvedItems.map((i) => ({
+      productId: i.productId,
+      productName: i.name,
+      variantName: i.variant,
+      unitPrice: i.unitPrice,
+      quantity: i.quantity,
+      subtotal: Number(i.subtotal.toFixed(2))
+    }));
+    await order.save();
+
+    let walletBalance = null;
+    const earnedDelta = totals.coinsEarned - previousCoinsEarned;
+    const redeemedDelta = previousWalletCoinsRedeemed - totals.walletCoinsRedeemed;
+    const walletDelta = earnedDelta + redeemedDelta;
+    if (walletDelta) {
+      const user = await models.User.findById(req.session.user.id).select("walletCoins");
+      if (user) {
+        walletBalance = Math.max(0, Math.floor(Number(user.walletCoins || 0)) + walletDelta);
+        user.walletCoins = walletBalance;
+        await user.save();
+        req.session.user = { ...req.session.user, walletCoins: walletBalance };
+      }
+    }
+
+    res.json({
+      ok: true,
+      orderId: String(order._id),
+      status: order.status,
+      modifiedAt: order.modifiedAt,
+      modifiedCount: order.modifiedCount,
+      subtotalAmount: order.subtotalAmount,
+      discountAmount: order.discountAmount,
+      taxAmount: order.taxAmount,
+      totalAmount: order.totalAmount,
+      coinsEarned: order.coinsEarned,
+      walletBalance
+    });
+  } catch (err) {
+    if (restoredOriginalStock && !appliedNewStock && originalItems) {
+      await decrementSavedOrderStock(originalItems).catch((stockErr) => {
+        console.error("Failed to restore original stock after modify error:", stockErr.message);
+      });
+    }
+    if (err && err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    console.error("Failed to modify customer order:", err.message);
+    res.status(500).json({ error: "Could not modify order" });
+  }
 });
 
 app.post("/api/complaints", requireAuth, (req, res) => {
@@ -2288,7 +2509,7 @@ app.get("/api/admin/orders", requireAnyAdminPermission(["orders", "alerts", "del
 
   let orders = await models.Order.find(query)
     .sort({ createdAt: -1 })
-    .select("customerName customerEmail customerPhone deliveryAddress paymentMethod subtotalAmount discountAmount taxAmount tipAmount totalAmount status cancelNote createdAt items promoCode deliveryEmployeeId deliveryAssignedBy deliveryAssignedAt deliveryAcceptedAt deliveryCompletedAt deliveryCanceledAt deliveryCancelNote")
+    .select("customerName customerEmail customerPhone deliveryAddress paymentMethod subtotalAmount discountAmount taxAmount tipAmount totalAmount status cancelNote createdAt modifiedAt modifiedCount items promoCode deliveryEmployeeId deliveryAssignedBy deliveryAssignedAt deliveryAcceptedAt deliveryCompletedAt deliveryCanceledAt deliveryCancelNote")
     .populate("deliveryEmployeeId", "name email phoneNumber role employeePhotoPath active")
     .lean();
 
@@ -2316,6 +2537,8 @@ app.get("/api/admin/orders", requireAnyAdminPermission(["orders", "alerts", "del
       totalAmount: o.totalAmount,
       status: o.status,
       cancelNote: o.cancelNote || null,
+      modifiedAt: o.modifiedAt || null,
+      modifiedCount: o.modifiedCount || 0,
       delivery: serializeOrderDelivery(o),
       createdAt: o.createdAt,
       items: (o.items || []).map((it) => ({
@@ -2778,8 +3001,18 @@ async function updateOrderStatusHandler(req, res) {
       return res.status(404).json({ error: "Order not found" });
     }
 
+    const now = new Date();
     order.status = status;
     order.cancelNote = status === "CANCELED" ? cancelNote : null;
+    if (status === "DELIVERED") {
+      order.deliveryCompletedAt = order.deliveryCompletedAt || now;
+      order.deliveryCanceledAt = null;
+      order.deliveryCancelNote = null;
+    }
+    if (status === "CANCELED") {
+      order.deliveryCanceledAt = order.deliveryCanceledAt || now;
+      order.deliveryCancelNote = cancelNote;
+    }
     await order.save();
 
     res.json({ ok: true, status: order.status });
