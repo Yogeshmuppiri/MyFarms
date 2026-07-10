@@ -237,7 +237,7 @@ export function getProductImagePath(productName, files) {
     }
   }
 
-  return bestFile ? `/resources/${encodeURIComponent(bestFile)}` : "";
+  return bestFile ? withApiBase(`/resources/${encodeURIComponent(bestFile)}`) : "";
 }
 
 export function statusLabel(status) {
