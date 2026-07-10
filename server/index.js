@@ -44,6 +44,11 @@ const COMPLAINT_RETENTION_DAYS = 30;
 const ORDER_MANAGE_WINDOW_MS = 2 * 60 * 60 * 1000;
 const CUSTOMER_TRACK_DELIVERED_MS = 48 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_MS || 1000 * 60 * 10);
+const SESSION_COOKIE_SAMESITE = String(process.env.SESSION_COOKIE_SAMESITE || "lax").toLowerCase();
+const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const MongoStore = MongoStoreModule && MongoStoreModule.default ? MongoStoreModule.default : MongoStoreModule;
 
 const hasCloudinaryConfig = Boolean(
@@ -65,6 +70,19 @@ if (hasCloudinaryConfig) {
   });
 }
 
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && CORS_ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  return next();
+});
+
 app.use(express.json({ limit: "8mb" }));
 app.use(
   session({
@@ -79,7 +97,7 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: SESSION_COOKIE_SAMESITE === "none" ? "none" : "lax",
       secure: String(process.env.NODE_ENV || "").toLowerCase() === "production",
       maxAge: SESSION_IDLE_MS
     }

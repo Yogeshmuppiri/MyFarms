@@ -1,10 +1,19 @@
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+
+function withApiBase(path) {
+  const raw = String(path || "");
+  if (!API_BASE_URL || /^https?:\/\//i.test(raw)) return raw;
+  return `${API_BASE_URL}${raw.startsWith("/") ? raw : `/${raw}`}`;
+}
+
 export async function api(path, options = {}) {
   const isFormData = options.body instanceof FormData;
   const headers = isFormData
     ? { ...(options.headers || {}) }
     : { "Content-Type": "application/json", ...(options.headers || {}) };
-  const res = await fetch(path, {
+  const res = await fetch(withApiBase(path), {
     headers,
+    credentials: "include",
     ...options
   });
 
@@ -180,7 +189,7 @@ export function resolveAssetUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
-  return `/resources/${encodeURIComponent(raw)}`;
+  return withApiBase(`/resources/${encodeURIComponent(raw)}`);
 }
 
 export function getProductImagePath(productName, files) {

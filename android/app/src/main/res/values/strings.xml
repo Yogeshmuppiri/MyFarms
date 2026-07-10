@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">My Farms</string>
+    <string name="title_activity_main">My Farms</string>
+    <string name="package_name">com.myfarms.customer</string>
+    <string name="custom_url_scheme">com.myfarms.customer</string>
+</resources>

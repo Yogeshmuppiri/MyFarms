@@ -60,6 +60,7 @@ export default function App() {
   const [orders, setOrders] = useState([]);
   const [complaints, setComplaints] = useState([]);
   const [toast, setToast] = useState("");
+  const [checkoutNotice, setCheckoutNotice] = useState("");
   const [promoPreview, setPromoPreview] = useState({ valid: false, code: "", discountAmount: 0, message: "" });
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isFilterCompact, setIsFilterCompact] = useState(false);
@@ -73,6 +74,7 @@ export default function App() {
   const [showFreshnessChecker, setShowFreshnessChecker] = useState(false);
   const [showFarmAssistant, setShowFarmAssistant] = useState(false);
   const [showMainMenu, setShowMainMenu] = useState(false);
+  const [showAppProfileMenu, setShowAppProfileMenu] = useState(false);
   const [showMenuOrders, setShowMenuOrders] = useState(false);
   const [accountPanel, setAccountPanel] = useState(null);
   const [showComplaint, setShowComplaint] = useState(false);
@@ -260,9 +262,41 @@ export default function App() {
     }
   }, [filteredProducts, gestureSelectedProductId]);
 
+  const hasOpenOverlay = Boolean(
+    showAuth ||
+    showForgot ||
+    showProfile ||
+    showWallet ||
+    showFreshnessChecker ||
+    showFarmAssistant ||
+    showAppProfileMenu ||
+    accountPanel ||
+    showComplaint ||
+    managingOrder ||
+    previewProduct ||
+    showCheckout
+  );
+
+  useEffect(() => {
+    if (!hasOpenOverlay) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight = previousPaddingRight;
+    };
+  }, [hasOpenOverlay]);
+
   function showToast(message) {
     setToast(message);
     setTimeout(() => setToast(""), 2600);
+  }
+
+  function showCheckoutNotice(message) {
+    setCheckoutNotice(message);
   }
 
   function findProductBySpeech(text) {
@@ -1382,20 +1416,27 @@ export default function App() {
   function closeCheckoutFlow() {
     setShowCheckout(false);
     setCheckoutStep(1);
+    setCheckoutNotice("");
   }
 
   function canContinueCheckoutStep(step = checkoutStep, showMessage = true) {
+    const notify = (message) => {
+      if (!showMessage) return;
+      showCheckoutNotice(message);
+      if (!showCheckout) showToast(message);
+    };
+
     if (step === 1) {
       if (String(checkout.fullName || "").trim().length < 2) {
-        if (showMessage) showToast("Please enter full name");
+        notify("Please enter full name");
         return false;
       }
       if (!/^\d{10}$/.test(String(checkout.contactNumber || "").trim())) {
-        if (showMessage) showToast("Please enter a valid 10-digit mobile number");
+        notify("Please enter a valid 10-digit mobile number");
         return false;
       }
       if (checkout.paymentMethod !== "PICKUP" && String(checkout.address || "").trim().length < 8) {
-        if (showMessage) showToast("Please enter delivery address");
+        notify("Please enter delivery address");
         return false;
       }
     }
@@ -1403,20 +1444,22 @@ export default function App() {
     if (step === 2) {
       const tip = Number(checkout.tipAmount || 0);
       if (!["COD", "PICKUP"].includes(checkout.paymentMethod)) {
-        if (showMessage) showToast("Select payment method");
+        notify("Select payment method");
         return false;
       }
       if (!Number.isFinite(tip) || tip < 0 || tip > 5000) {
-        if (showMessage) showToast("Tip should be between 0 and 5000");
+        notify("Tip should be between 0 and 5000");
         return false;
       }
     }
 
+    if (showMessage) setCheckoutNotice("");
     return true;
   }
 
   function goToNextCheckoutStep() {
     if (!canContinueCheckoutStep(checkoutStep)) return;
+    setCheckoutNotice("");
     setCheckoutStep((step) => Math.min(step + 1, 3));
   }
 
@@ -1466,6 +1509,35 @@ export default function App() {
     setShowMainMenu(false);
     if (panel === "orders") loadOrders();
     if (panel === "complaints") loadComplaints();
+  }
+
+  function handleCustomerAppNav(target) {
+    setShowMainMenu(false);
+    setAccountPanel(null);
+    if (target === "home") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (target === "products") {
+      productsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (target === "cart") {
+      cartPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (!user) {
+      setAuthMode("login");
+      setShowAuth(true);
+      return;
+    }
+    if (target === "orders") {
+      openAccountPanel("orders");
+      return;
+    }
+    if (target === "profile") {
+      setShowAppProfileMenu(true);
+    }
   }
 
   function openProductPreview(product) {
@@ -1609,6 +1681,7 @@ export default function App() {
     const code = sanitizePromoCode(checkout.promoCode);
     if (!code) {
       setPromoPreview({ valid: false, code: "", discountAmount: 0, message: "No promo applied" });
+      setCheckoutNotice("Enter a promo code to apply");
       return;
     }
     setCheckout((current) => ({ ...current, promoCode: code }));
@@ -1621,9 +1694,10 @@ export default function App() {
         discountAmount: Number(data.discountAmount || 0),
         message: data.valid ? `Promo applied: ${data.discountPercent}% off` : "Promo not applied"
       });
+      setCheckoutNotice(data.valid ? `Promo applied: ${data.discountPercent}% off` : "Promo not applied");
     } catch (err) {
       setPromoPreview({ valid: false, code: "", discountAmount: 0, message: err.message });
-      showToast(err.message);
+      setCheckoutNotice(err.message);
     }
   }
 
@@ -2738,6 +2812,41 @@ export default function App() {
           </div>
         ) : null}
 
+        <nav className="customer-app-nav" aria-label="Customer app navigation">
+          <button type="button" onClick={() => handleCustomerAppNav("home")}>
+            <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 11.5 12 5l8 6.5V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1v-8.5Z" />
+            </svg>
+            <span>Home</span>
+          </button>
+          <button type="button" onClick={() => handleCustomerAppNav("products")}>
+            <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 8h14M6 8l1 12h10l1-12M9 8V6a3 3 0 0 1 6 0v2" />
+            </svg>
+            <span>Products</span>
+          </button>
+          <button type="button" onClick={() => handleCustomerAppNav("cart")}>
+            <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 5h2l2 10h9l2-7H7M9 20h.01M17 20h.01" />
+            </svg>
+            <span>Cart</span>
+            {cartItemCount ? <strong className="app-nav-badge">{cartItemCount}</strong> : null}
+          </button>
+          <button type="button" onClick={() => handleCustomerAppNav("orders")}>
+            <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 4h10v16H7zM9 8h6M9 12h6M9 16h4" />
+            </svg>
+            <span>Orders</span>
+            {trackedOrders.length ? <strong className="app-nav-badge">{trackedOrders.length}</strong> : null}
+          </button>
+          <button type="button" onClick={() => handleCustomerAppNav("profile")}>
+            <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM5 21a7 7 0 0 1 14 0" />
+            </svg>
+            <span>Me</span>
+          </button>
+        </nav>
+
       </main>
 
       {trackedOrders.length ? (
@@ -2961,6 +3070,78 @@ export default function App() {
                   onChange={(e) => handleFreshnessUpload(e.target.files && e.target.files[0])}
                 />
               </label>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showAppProfileMenu && user ? (
+        <div
+          className="modal app-profile-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAppProfileMenu(false);
+          }}
+        >
+          <div className="modal-card app-profile-sheet" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={() => setShowAppProfileMenu(false)}>x</button>
+            <p className="kicker">My Farms</p>
+            <h3>Hi {user.name}</h3>
+            <p className="muted small">Manage your account, orders, support, and wallet.</p>
+            <div className="app-profile-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfile(true);
+                  setShowAppProfileMenu(false);
+                }}
+              >
+                Edit Profile
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  openAccountPanel("orders");
+                  setShowAppProfileMenu(false);
+                }}
+              >
+                My Orders
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  openComplaintFlow();
+                  setShowAppProfileMenu(false);
+                }}
+              >
+                Support & Complaints
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWallet(true);
+                  setShowAppProfileMenu(false);
+                }}
+              >
+                Wallet Coins
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/about.html";
+                }}
+              >
+                About Us
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  setShowAppProfileMenu(false);
+                  logoutUser();
+                }}
+              >
+                Logout
+              </button>
             </div>
           </div>
         </div>
@@ -3420,6 +3601,11 @@ export default function App() {
                 <span>Review</span>
               </button>
             </div>
+            {checkoutNotice ? (
+              <div className="checkout-notice" role="alert">
+                {checkoutNotice}
+              </div>
+            ) : null}
             <form
               onSubmit={async (e) => {
                 e.preventDefault();

@@ -1937,6 +1937,74 @@ main > * {
   display: none;
 }
 
+.customer-app-nav {
+  display: none;
+}
+
+.native-app .nav-actions {
+  display: none;
+}
+
+.native-app .topnav {
+  justify-content: flex-start;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.native-app .brand {
+  margin-left: 0;
+}
+
+.native-app .hero-copy > p:not(.kicker),
+.native-app .hero-points {
+  display: none;
+}
+
+.native-app .hero {
+  min-height: auto;
+  padding-top: 0;
+}
+
+.native-app .hero-content {
+  padding-top: 0.45rem;
+  padding-bottom: 1.15rem;
+}
+
+.app-profile-sheet {
+  width: min(92vw, 430px);
+}
+
+.app-profile-actions {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.app-profile-actions button {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(212, 228, 205, 0.94);
+  border-radius: 14px;
+  background: #fbfff8;
+  color: var(--leaf-dark);
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-profile-actions button:active {
+  background: #eaf5e6;
+}
+
+.app-profile-actions button.danger {
+  border-color: rgba(189, 58, 55, 0.25);
+  background: #fff7f6;
+  color: #a3312e;
+}
+
 .brand-footer {
   width: 100%;
   margin: 1.4rem 0 0;
@@ -3353,6 +3421,18 @@ select:disabled {
   padding-bottom: 1.2rem;
 }
 
+.checkout-notice {
+  margin: 0.75rem 0;
+  padding: 0.72rem 0.85rem;
+  border: 1px solid rgba(197, 127, 41, 0.32);
+  border-radius: 12px;
+  background: #fff7e8;
+  color: #7c4a10;
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .close-btn {
   position: absolute;
   right: 0.5rem;
@@ -3879,6 +3959,10 @@ select:disabled {
     padding-bottom: 6.8rem;
   }
 
+  .native-app main {
+    padding-bottom: 10.5rem;
+  }
+
   .promo-showcase {
     grid-template-columns: 1fr;
     gap: 0.78rem;
@@ -3939,6 +4023,77 @@ select:disabled {
     flex: 0 0 auto;
     min-width: 148px;
     box-shadow: 0 10px 20px rgba(47, 107, 63, 0.2);
+  }
+
+  .native-app .mobile-cart-bar {
+    bottom: 5.25rem;
+  }
+
+  .native-app .customer-app-nav {
+    position: fixed;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.55rem;
+    z-index: 1320;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.22rem;
+    padding: 0.48rem;
+    border: 1px solid rgba(201, 221, 195, 0.92);
+    border-radius: 22px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 252, 0.96), rgba(244, 249, 239, 0.96));
+    box-shadow: 0 18px 36px rgba(28, 58, 34, 0.2);
+    backdrop-filter: blur(16px) saturate(1.08);
+    -webkit-backdrop-filter: blur(16px) saturate(1.08);
+  }
+
+  .native-app .customer-app-nav button {
+    position: relative;
+    min-width: 0;
+    min-height: 58px;
+    display: grid;
+    place-items: center;
+    gap: 0.16rem;
+    border: 0;
+    border-radius: 16px;
+    background: transparent;
+    color: #4d5d4b;
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .native-app .customer-app-nav button:active {
+    background: #eaf5e6;
+    color: var(--leaf-dark);
+  }
+
+  .native-app .app-nav-icon {
+    width: 21px;
+    height: 21px;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .native-app .app-nav-badge {
+    position: absolute;
+    top: 0.22rem;
+    right: 0.32rem;
+    min-width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    padding: 0 0.18rem;
+    border-radius: 999px;
+    background: #2f6b3f;
+    color: #fff;
+    font-size: 0.62rem;
+    line-height: 1;
   }
 
   .order-tracker-dock {
@@ -4076,10 +4231,18 @@ select:disabled {
     padding-bottom: 6.4rem;
   }
 
+  .native-app main {
+    padding-bottom: 10.4rem;
+  }
+
   .brand-footer {
     margin-top: 1rem;
     padding-bottom: 5.8rem;
     align-items: flex-start;
+  }
+
+  .native-app .brand-footer {
+    padding-bottom: 6.2rem;
   }
 
   .account-menu {
@@ -4096,6 +4259,28 @@ select:disabled {
     gap: 0.65rem;
     padding: 0.72rem 0.74rem;
     border-radius: 16px;
+  }
+
+  .native-app .mobile-cart-bar {
+    bottom: 5.15rem;
+  }
+
+  .native-app .customer-app-nav {
+    left: 0.55rem;
+    right: 0.55rem;
+    bottom: 0.48rem;
+    border-radius: 20px;
+  }
+
+  .native-app .customer-app-nav button {
+    min-height: 54px;
+    border-radius: 14px;
+    font-size: 0.64rem;
+  }
+
+  .native-app .app-nav-icon {
+    width: 20px;
+    height: 20px;
   }
 
   .mobile-cart-summary strong {
