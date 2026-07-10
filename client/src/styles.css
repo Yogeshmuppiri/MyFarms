@@ -1333,6 +1333,12 @@ main > * {
   box-shadow:
     0 16px 32px rgba(31, 72, 42, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transition:
+    bottom 0.22s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
 }
 
 .farm-assistant-launcher.is-active {
@@ -4029,6 +4035,14 @@ select:disabled {
     bottom: 5.25rem;
   }
 
+  .native-app .farm-assistant-launcher {
+    bottom: 5.8rem;
+  }
+
+  .native-app .farm-assistant-launcher.has-mobile-cart {
+    bottom: 10.7rem;
+  }
+
   .native-app .customer-app-nav {
     position: fixed;
     left: 0.75rem;
@@ -4263,6 +4277,14 @@ select:disabled {
 
   .native-app .mobile-cart-bar {
     bottom: 5.15rem;
+  }
+
+  .native-app .farm-assistant-launcher {
+    bottom: 5.65rem;
+  }
+
+  .native-app .farm-assistant-launcher.has-mobile-cart {
+    bottom: 10.45rem;
   }
 
   .native-app .customer-app-nav {
@@ -4651,6 +4673,14 @@ select:disabled {
     padding: 0;
     justify-content: center;
     border-radius: 50%;
+  }
+
+  .native-app .farm-assistant-launcher {
+    bottom: 5.65rem;
+  }
+
+  .native-app .farm-assistant-launcher.has-mobile-cart {
+    bottom: 10.45rem;
   }
 
   .farm-assistant-launcher img {

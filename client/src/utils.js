@@ -6,6 +6,10 @@ function withApiBase(path) {
   return `${API_BASE_URL}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
 
+export function resolveSiteUrl(path) {
+  return withApiBase(path);
+}
+
 export async function api(path, options = {}) {
   const isFormData = options.body instanceof FormData;
   const headers = isFormData

@@ -10,6 +10,7 @@ import {
   normalizeToken,
   parseSpokenNumber,
   resolveAssetUrl,
+  resolveSiteUrl,
   sanitizePromoCode,
   scoreSpeechProductMatch,
   statusLabel,
@@ -42,6 +43,11 @@ const DEFAULT_SEARCH_HINTS = [
 ];
 
 export default function App() {
+  const logoUrl = resolveSiteUrl("/assets/images/myfarmslogo.png");
+  const mascotUrl = resolveSiteUrl("/resources/farmer-mascot-main.png");
+  const aboutUrl = resolveSiteUrl("/about.html");
+  const menuIconUrl = (name) => resolveSiteUrl(`/resources/${name}`);
+
   const [products, setProducts] = useState([]);
   const [imageFiles, setImageFiles] = useState([]);
   const [livePromos, setLivePromos] = useState([]);
@@ -220,6 +226,14 @@ export default function App() {
     }).sort((a, b) => Math.abs(b.offset) - Math.abs(a.offset));
   }, [heroCarouselIndex, heroShowcaseSource]);
   const trackedOrders = useMemo(() => (orders || []).filter((order) => order.canTrack).slice(0, 4), [orders]);
+  const productImageUrls = useMemo(() => {
+    const urls = new Set();
+    for (const product of products) {
+      const imageUrl = product.imagePath ? resolveAssetUrl(product.imagePath) : getProductImagePath(product.name, imageFiles);
+      if (imageUrl) urls.add(imageUrl);
+    }
+    return [...urls];
+  }, [products, imageFiles]);
 
   const activePromo = livePromos.length ? livePromos[promoCarouselIndex % livePromos.length] : null;
 
@@ -251,6 +265,22 @@ export default function App() {
     isPlacingOrderRef.current = isPlacingOrder;
     pendingAssistantOrderConfirmationRef.current = pendingAssistantOrderConfirmation;
   }, [products, categories, filteredProducts, selectedCategory, cartItemCount, user, cart, checkout, showCheckout, isPlacingOrder, pendingAssistantOrderConfirmation]);
+
+  useEffect(() => {
+    if (!productImageUrls.length) return undefined;
+    const preloaded = productImageUrls.map((url) => {
+      const img = new Image();
+      img.decoding = "async";
+      img.src = url;
+      return img;
+    });
+    return () => {
+      preloaded.forEach((img) => {
+        img.onload = null;
+        img.onerror = null;
+      });
+    };
+  }, [productImageUrls]);
 
   useEffect(() => {
     if (
@@ -690,7 +720,7 @@ export default function App() {
       /\b(my\s*farms?|myfarms)\b.*\b(about|info|information)\b/.test(normalized);
     if (asksAboutMyFarms && !wantsAdd) {
       setAssistantMessage("Opening About Us");
-      window.location.assign("/about.html");
+      window.location.assign(aboutUrl);
       return true;
     }
 
@@ -2332,7 +2362,7 @@ export default function App() {
         </div>
         <nav className="topnav">
           <div className="brand">
-            <img src="/assets/images/myfarmslogo.png" alt="My Farms logo" className="brand-logo" />
+            <img src={logoUrl} alt="My Farms logo" className="brand-logo" />
           </div>
           <div className="nav-actions" id="navActions">
             {user ? (
@@ -2341,7 +2371,7 @@ export default function App() {
               </div>
             ) : (
               <>
-                <a className="btn-ghost link-btn" href="/about.html">
+                <a className="btn-ghost link-btn" href={aboutUrl}>
                   About Us
                 </a>
                 <button className="btn-primary" onClick={() => setShowAuth(true)}>
@@ -2380,7 +2410,7 @@ export default function App() {
                         <span className="account-menu-label">
                           <span className="account-menu-icon" aria-hidden="true">
                             <img
-                              src="/resources/profile.png"
+                              src={menuIconUrl("profile.png")}
                               alt=""
                               loading="lazy"
                               onError={(e) => {
@@ -2395,7 +2425,7 @@ export default function App() {
                         <span className="account-menu-label">
                           <span className="account-menu-icon" aria-hidden="true">
                             <img
-                              src="/resources/myorders.png"
+                              src={menuIconUrl("myorders.png")}
                               alt=""
                               loading="lazy"
                               onError={(e) => {
@@ -2418,7 +2448,7 @@ export default function App() {
                             <span className="account-menu-label">
                             <span className="account-menu-icon" aria-hidden="true">
                               <img
-                                src="/resources/history.png"
+                                src={menuIconUrl("history.png")}
                                 alt=""
                                 loading="lazy"
                                 onError={(e) => {
@@ -2439,7 +2469,7 @@ export default function App() {
                           <span className="account-menu-label">
                             <span className="account-menu-icon" aria-hidden="true">
                               <img
-                                src="/resources/orderissue.png"
+                                src={menuIconUrl("orderissue.png")}
                                 alt=""
                                 loading="lazy"
                                 onError={(e) => {
@@ -2459,7 +2489,7 @@ export default function App() {
                           <span className="account-menu-label">
                             <span className="account-menu-icon" aria-hidden="true">
                               <img
-                                src="/resources/complain.png"
+                                src={menuIconUrl("complain.png")}
                                 alt=""
                                 loading="lazy"
                                 onError={(e) => {
@@ -2472,11 +2502,11 @@ export default function App() {
                         </button>
                       </div>
                     ) : null}
-                    <a href="/about.html">
+                    <a href={aboutUrl}>
                       <span className="account-menu-label">
                         <span className="account-menu-icon" aria-hidden="true">
                           <img
-                            src="/resources/aboutus.png"
+                            src={menuIconUrl("aboutus.png")}
                             alt=""
                             loading="lazy"
                             onError={(e) => {
@@ -2498,7 +2528,7 @@ export default function App() {
                       <span className="account-menu-label">
                         <span className="account-menu-icon" aria-hidden="true">
                           <img
-                            src="/resources/wallet.png"
+                            src={menuIconUrl("wallet.png")}
                             alt=""
                             loading="lazy"
                             onError={(e) => {
@@ -2520,7 +2550,7 @@ export default function App() {
                       <span className="account-menu-label">
                         <span className="account-menu-icon" aria-hidden="true">
                           <img
-                            src="/resources/logout.png"
+                            src={menuIconUrl("logout.png")}
                             alt=""
                             loading="lazy"
                             onError={(e) => {
@@ -2702,7 +2732,7 @@ export default function App() {
               onClick={() => setShowFreshnessChecker(true)}
               aria-label="Check produce freshness"
             >
-              <img src="/resources/farmer-mascot-main.png" alt="" aria-hidden="true" />
+              <img src={mascotUrl} alt="" aria-hidden="true" />
               <span>Product</span>
               <strong>Freshness Lens</strong>
             </button>
@@ -2843,7 +2873,7 @@ export default function App() {
             <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM5 21a7 7 0 0 1 14 0" />
             </svg>
-            <span>Me</span>
+            <span>Profile</span>
           </button>
         </nav>
 
@@ -2883,7 +2913,7 @@ export default function App() {
       ) : null}
 
       <footer className="brand-footer">
-        <img src="/assets/images/myfarmslogo.png" alt="My Farms logo" />
+        <img src={logoUrl} alt="My Farms logo" />
         <div>
           <strong>My Farms</strong>
           <span>Fresh essentials, direct from local farms.</span>
@@ -2892,15 +2922,15 @@ export default function App() {
       </footer>
 
       <div className="floating-mascot" aria-hidden="true">
-        <img className="farmer-mascot-image" src="/resources/farmer-mascot-main.png" alt="" />
+        <img className="farmer-mascot-image" src={mascotUrl} alt="" />
       </div>
 
       <button
-        className={`farm-assistant-launcher ${farmAssistantActive ? "is-active" : ""}`}
+        className={`farm-assistant-launcher ${farmAssistantActive ? "is-active" : ""} ${cartItemCount ? "has-mobile-cart" : ""}`}
         type="button"
         onClick={() => setShowFarmAssistant(true)}
       >
-        <img src="/resources/farmer-mascot-main.png" alt="" aria-hidden="true" />
+        <img src={mascotUrl} alt="" aria-hidden="true" />
         <span>Farm Assistant</span>
         <span className="assistant-live-dot" aria-hidden="true" />
       </button>
@@ -3127,7 +3157,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  window.location.href = "/about.html";
+                  window.location.href = aboutUrl;
                 }}
               >
                 About Us

@@ -10,6 +10,7 @@ import {
   normalizeToken,
   parseSpokenNumber,
   resolveAssetUrl,
+  resolveSiteUrl,
   sanitizePromoCode,
   scoreSpeechProductMatch,
   statusLabel,
@@ -122,6 +123,7 @@ describe("formatting and product asset helpers", () => {
     expect(resolveAssetUrl("mango fresh.jpg")).toBe("/resources/mango%20fresh.jpg");
     expect(resolveAssetUrl("https://cdn.example.com/mango.jpg")).toBe("https://cdn.example.com/mango.jpg");
     expect(resolveAssetUrl("")).toBe("");
+    expect(resolveSiteUrl("/assets/images/myfarmslogo.png")).toBe("/assets/images/myfarmslogo.png");
   });
 
   it("finds product images using known aliases", () => {
