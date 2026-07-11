@@ -17,6 +17,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
     "@capacitor/core": "^8.4.1",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.9.0",

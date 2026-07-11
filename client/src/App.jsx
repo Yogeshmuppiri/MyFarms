@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { SpeechRecognition } from "@capacitor-community/speech-recognition";
 import {
   api,
   getProductImagePath,
@@ -41,6 +43,7 @@ const DEFAULT_SEARCH_HINTS = [
   "Search for eggs",
   "Search for chicken"
 ];
+const IS_NATIVE_APP = Capacitor.isNativePlatform();
 
 export default function App() {
   const logoUrl = resolveSiteUrl("/assets/images/myfarmslogo.png");
@@ -113,6 +116,7 @@ export default function App() {
   const voiceRecognitionRef = useRef(null);
   const voiceShouldListenRef = useRef(false);
   const voiceRestartTimerRef = useRef(null);
+  const nativeVoiceActiveRef = useRef(false);
   const productsSectionRef = useRef(null);
   const cartPanelRef = useRef(null);
   const cartRef = useRef([]);
@@ -1493,9 +1497,67 @@ export default function App() {
     setCheckoutStep((step) => Math.min(step + 1, 3));
   }
 
-  function startVoiceSearch() {
+  async function startVoiceSearch() {
     if (!voiceSupported) {
       showToast("Voice search is not supported in this browser");
+      return;
+    }
+
+    if (IS_NATIVE_APP && Capacitor.isPluginAvailable("SpeechRecognition")) {
+      if (nativeVoiceActiveRef.current || isVoiceListening) {
+        nativeVoiceActiveRef.current = false;
+        await SpeechRecognition.stop().catch(() => {});
+        setIsVoiceListening(false);
+        setIsVoiceCommandActive(false);
+        setAssistantMessage("Voice command stopped");
+        return;
+      }
+
+      try {
+        const permission = await SpeechRecognition.checkPermissions();
+        if (permission.speechRecognition !== "granted") {
+          const requested = await SpeechRecognition.requestPermissions();
+          if (requested.speechRecognition !== "granted") {
+            setAssistantMessage("Please allow microphone permission to use voice commands.");
+            showToast("Microphone permission needed");
+            return;
+          }
+        }
+
+        nativeVoiceActiveRef.current = true;
+        setIsVoiceListening(true);
+        setIsVoiceCommandActive(true);
+        setAssistantTranscript("");
+        setAssistantMessage("Listening for voice commands");
+        const result = await SpeechRecognition.start({
+          language: "en-IN",
+          maxResults: 1,
+          partialResults: false,
+          popup: false
+        });
+        const transcript = String(result?.matches?.[0] || "").trim();
+        nativeVoiceActiveRef.current = false;
+        setIsVoiceListening(false);
+        setIsVoiceCommandActive(false);
+
+        if (transcript) {
+          await runShoppingCommand(transcript);
+        } else {
+          setAssistantMessage("I did not hear a command. Please try again.");
+        }
+      } catch (err) {
+        nativeVoiceActiveRef.current = false;
+        setIsVoiceListening(false);
+        setIsVoiceCommandActive(false);
+        const message = String(err?.message || err || "");
+        if (/permission/i.test(message)) {
+          setAssistantMessage("Please allow microphone permission to use voice commands.");
+          showToast("Microphone permission needed");
+        } else {
+          setAssistantMessage("Unable to capture voice. Please try again.");
+          showToast("Unable to capture voice");
+        }
+      }
       return;
     }
 
@@ -2114,6 +2176,34 @@ export default function App() {
   }, [searchQuery, searchHints]);
 
   useEffect(() => {
+    if (IS_NATIVE_APP && Capacitor.isPluginAvailable("SpeechRecognition")) {
+      let isCancelled = false;
+      SpeechRecognition.available()
+        .then(({ available }) => {
+          if (!isCancelled) {
+            setVoiceSupported(Boolean(available));
+            if (!available) {
+              setAssistantMessage("Voice commands are not available on this device.");
+            }
+          }
+        })
+        .catch(() => {
+          if (!isCancelled) {
+            setVoiceSupported(false);
+            setAssistantMessage("Voice commands are not available on this device.");
+          }
+        });
+
+      return () => {
+        isCancelled = true;
+        nativeVoiceActiveRef.current = false;
+        SpeechRecognition.stop().catch(() => {});
+        SpeechRecognition.removeAllListeners().catch(() => {});
+        setIsVoiceListening(false);
+        setIsVoiceCommandActive(false);
+      };
+    }
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setVoiceSupported(false);
