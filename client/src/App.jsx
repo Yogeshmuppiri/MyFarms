@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import { SpeechRecognition } from "@capacitor-community/speech-recognition";
+import { SpeechRecognition as NativeSpeechRecognition } from "@capacitor-community/speech-recognition";
 import {
   api,
   getProductImagePath,
@@ -117,6 +117,8 @@ export default function App() {
   const voiceShouldListenRef = useRef(false);
   const voiceRestartTimerRef = useRef(null);
   const nativeVoiceActiveRef = useRef(false);
+  const nativeVoiceSessionRef = useRef(0);
+  const nativeVoiceRestartTimerRef = useRef(null);
   const productsSectionRef = useRef(null);
   const cartPanelRef = useRef(null);
   const cartRef = useRef([]);
@@ -1497,6 +1499,71 @@ export default function App() {
     setCheckoutStep((step) => Math.min(step + 1, 3));
   }
 
+  function stopNativeVoiceCommand(message = "Voice command stopped") {
+    nativeVoiceActiveRef.current = false;
+    nativeVoiceSessionRef.current += 1;
+    if (nativeVoiceRestartTimerRef.current) {
+      window.clearTimeout(nativeVoiceRestartTimerRef.current);
+      nativeVoiceRestartTimerRef.current = null;
+    }
+    NativeSpeechRecognition.stop().catch(() => {});
+    setIsVoiceListening(false);
+    setIsVoiceCommandActive(false);
+    setAssistantMessage(message);
+  }
+
+  async function listenForNativeVoiceCommand(sessionId) {
+    if (!nativeVoiceActiveRef.current || nativeVoiceSessionRef.current !== sessionId) return;
+
+    setIsVoiceListening(true);
+    setIsVoiceCommandActive(true);
+
+    try {
+      const result = await NativeSpeechRecognition.start({
+        language: "en-IN",
+        maxResults: 1,
+        partialResults: false,
+        popup: false
+      });
+
+      if (!nativeVoiceActiveRef.current || nativeVoiceSessionRef.current !== sessionId) return;
+
+      const transcript = String(result?.matches?.[0] || "").trim();
+      setIsVoiceListening(false);
+
+      if (transcript) {
+        await runShoppingCommand(transcript);
+      } else {
+        setAssistantMessage("I did not hear a command. Listening again...");
+      }
+
+      if (!nativeVoiceActiveRef.current || nativeVoiceSessionRef.current !== sessionId) return;
+      nativeVoiceRestartTimerRef.current = window.setTimeout(() => {
+        listenForNativeVoiceCommand(sessionId);
+      }, 450);
+    } catch (err) {
+      if (!nativeVoiceActiveRef.current || nativeVoiceSessionRef.current !== sessionId) return;
+
+      setIsVoiceListening(false);
+      const message = String(err?.message || err || "");
+      if (/permission/i.test(message)) {
+        stopNativeVoiceCommand("Please allow microphone permission to use voice commands.");
+        showToast("Microphone permission needed");
+        return;
+      }
+
+      if (/no[-\s]?speech|aborted|cancel/i.test(message)) {
+        nativeVoiceRestartTimerRef.current = window.setTimeout(() => {
+          listenForNativeVoiceCommand(sessionId);
+        }, 600);
+        return;
+      }
+
+      stopNativeVoiceCommand("Unable to capture voice. Please try again.");
+      showToast("Unable to capture voice");
+    }
+  }
+
   async function startVoiceSearch() {
     if (!voiceSupported) {
       showToast("Voice search is not supported in this browser");
@@ -1505,18 +1572,14 @@ export default function App() {
 
     if (IS_NATIVE_APP && Capacitor.isPluginAvailable("SpeechRecognition")) {
       if (nativeVoiceActiveRef.current || isVoiceListening) {
-        nativeVoiceActiveRef.current = false;
-        await SpeechRecognition.stop().catch(() => {});
-        setIsVoiceListening(false);
-        setIsVoiceCommandActive(false);
-        setAssistantMessage("Voice command stopped");
+        stopNativeVoiceCommand();
         return;
       }
 
       try {
-        const permission = await SpeechRecognition.checkPermissions();
+        const permission = await NativeSpeechRecognition.checkPermissions();
         if (permission.speechRecognition !== "granted") {
-          const requested = await SpeechRecognition.requestPermissions();
+          const requested = await NativeSpeechRecognition.requestPermissions();
           if (requested.speechRecognition !== "granted") {
             setAssistantMessage("Please allow microphone permission to use voice commands.");
             showToast("Microphone permission needed");
@@ -1525,36 +1588,20 @@ export default function App() {
         }
 
         nativeVoiceActiveRef.current = true;
+        const sessionId = nativeVoiceSessionRef.current + 1;
+        nativeVoiceSessionRef.current = sessionId;
         setIsVoiceListening(true);
         setIsVoiceCommandActive(true);
         setAssistantTranscript("");
         setAssistantMessage("Listening for voice commands");
-        const result = await SpeechRecognition.start({
-          language: "en-IN",
-          maxResults: 1,
-          partialResults: false,
-          popup: false
-        });
-        const transcript = String(result?.matches?.[0] || "").trim();
-        nativeVoiceActiveRef.current = false;
-        setIsVoiceListening(false);
-        setIsVoiceCommandActive(false);
-
-        if (transcript) {
-          await runShoppingCommand(transcript);
-        } else {
-          setAssistantMessage("I did not hear a command. Please try again.");
-        }
+        listenForNativeVoiceCommand(sessionId);
       } catch (err) {
-        nativeVoiceActiveRef.current = false;
-        setIsVoiceListening(false);
-        setIsVoiceCommandActive(false);
         const message = String(err?.message || err || "");
         if (/permission/i.test(message)) {
-          setAssistantMessage("Please allow microphone permission to use voice commands.");
+          stopNativeVoiceCommand("Please allow microphone permission to use voice commands.");
           showToast("Microphone permission needed");
         } else {
-          setAssistantMessage("Unable to capture voice. Please try again.");
+          stopNativeVoiceCommand("Unable to capture voice. Please try again.");
           showToast("Unable to capture voice");
         }
       }
@@ -2177,30 +2224,9 @@ export default function App() {
 
   useEffect(() => {
     if (IS_NATIVE_APP && Capacitor.isPluginAvailable("SpeechRecognition")) {
-      let isCancelled = false;
-      SpeechRecognition.available()
-        .then(({ available }) => {
-          if (!isCancelled) {
-            setVoiceSupported(Boolean(available));
-            if (!available) {
-              setAssistantMessage("Voice commands are not available on this device.");
-            }
-          }
-        })
-        .catch(() => {
-          if (!isCancelled) {
-            setVoiceSupported(false);
-            setAssistantMessage("Voice commands are not available on this device.");
-          }
-        });
-
+      setVoiceSupported(true);
       return () => {
-        isCancelled = true;
-        nativeVoiceActiveRef.current = false;
-        SpeechRecognition.stop().catch(() => {});
-        SpeechRecognition.removeAllListeners().catch(() => {});
-        setIsVoiceListening(false);
-        setIsVoiceCommandActive(false);
+        stopNativeVoiceCommand("");
       };
     }
 
