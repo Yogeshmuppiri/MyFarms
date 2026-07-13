@@ -1,4 +1,10 @@
-const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+import { Capacitor } from "@capacitor/core";
+
+const DEFAULT_NATIVE_API_BASE_URL = "https://myfarms.onrender.com";
+const isNativeApp = Capacitor.isNativePlatform();
+const API_BASE_URL = String(
+  import.meta.env.VITE_API_BASE_URL || (isNativeApp ? DEFAULT_NATIVE_API_BASE_URL : "")
+).replace(/\/+$/, "");
 
 function withApiBase(path) {
   const raw = String(path || "");

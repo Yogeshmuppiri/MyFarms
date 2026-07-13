@@ -46,7 +46,7 @@ const DEFAULT_SEARCH_HINTS = [
 const IS_NATIVE_APP = Capacitor.isNativePlatform();
 
 export default function App() {
-  const logoUrl = resolveSiteUrl("/assets/images/myfarmslogo.png");
+  const logoUrl = resolveSiteUrl("/resources/myfarmslogo.png");
   const mascotUrl = resolveSiteUrl("/resources/farmer-mascot-main.png");
   const aboutUrl = resolveSiteUrl("/about.html");
   const menuIconUrl = (name) => resolveSiteUrl(`/resources/${name}`);
