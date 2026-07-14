@@ -49,6 +49,7 @@ export default function App() {
   const logoUrl = resolveSiteUrl("/resources/myfarmslogo.png");
   const mascotUrl = resolveSiteUrl("/resources/farmer-mascot-main.png");
   const aboutUrl = resolveSiteUrl("/about.html");
+  const termsUrl = resolveSiteUrl("/terms-and-conditions.html");
   const menuIconUrl = (name) => resolveSiteUrl(`/resources/${name}`);
 
   const [products, setProducts] = useState([]);
@@ -71,6 +72,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [checkoutNotice, setCheckoutNotice] = useState("");
   const [promoPreview, setPromoPreview] = useState({ valid: false, code: "", discountAmount: 0, message: "" });
+  const [loadedProductImages, setLoadedProductImages] = useState(() => new Set());
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isFilterCompact, setIsFilterCompact] = useState(false);
 
@@ -86,6 +88,8 @@ export default function App() {
   const [showAppProfileMenu, setShowAppProfileMenu] = useState(false);
   const [showMenuOrders, setShowMenuOrders] = useState(false);
   const [accountPanel, setAccountPanel] = useState(null);
+  const [accountPanelReturnToProfile, setAccountPanelReturnToProfile] = useState(false);
+  const [profileToolReturnToProfile, setProfileToolReturnToProfile] = useState(false);
   const [showComplaint, setShowComplaint] = useState(false);
   const [managingOrder, setManagingOrder] = useState(null);
   const [expandedOrders, setExpandedOrders] = useState({});
@@ -97,6 +101,7 @@ export default function App() {
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isForgotSubmitting, setIsForgotSubmitting] = useState(false);
   const [showAuthPassword, setShowAuthPassword] = useState(false);
+  const [authTermsAccepted, setAuthTermsAccepted] = useState(false);
   const [isProfileSubmitting, setIsProfileSubmitting] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isComplaintSubmitting, setIsComplaintSubmitting] = useState(false);
@@ -277,6 +282,14 @@ export default function App() {
     const preloaded = productImageUrls.map((url) => {
       const img = new Image();
       img.decoding = "async";
+      img.onload = () => {
+        setLoadedProductImages((current) => {
+          if (current.has(url)) return current;
+          const next = new Set(current);
+          next.add(url);
+          return next;
+        });
+      };
       img.src = url;
       return img;
     });
@@ -1643,16 +1656,45 @@ export default function App() {
     setShowComplaint(true);
   }
 
-  function openAccountPanel(panel) {
+  function openProfileTool(openTool) {
+    setProfileToolReturnToProfile(true);
+    setShowAppProfileMenu(false);
+    openTool();
+  }
+
+  function closeProfileTool(closeTool) {
+    closeTool();
+    setProfileToolReturnToProfile(false);
+  }
+
+  function returnToProfileFromTool(closeTool) {
+    closeTool();
+    setProfileToolReturnToProfile(false);
+    setShowAppProfileMenu(true);
+  }
+
+  function openAccountPanel(panel, options = {}) {
     setAccountPanel(panel);
+    setAccountPanelReturnToProfile(Boolean(options.returnToProfile));
     setShowMainMenu(false);
     if (panel === "orders") loadOrders();
     if (panel === "complaints") loadComplaints();
   }
 
+  function closeAccountPanel() {
+    setAccountPanel(null);
+    setAccountPanelReturnToProfile(false);
+  }
+
+  function returnToProfileTools() {
+    setAccountPanel(null);
+    setAccountPanelReturnToProfile(false);
+    setShowAppProfileMenu(true);
+  }
+
   function handleCustomerAppNav(target) {
     setShowMainMenu(false);
-    setAccountPanel(null);
+    closeAccountPanel();
     if (target === "home") {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
@@ -1707,8 +1749,13 @@ export default function App() {
     setUser(null);
     setOrders([]);
     setComplaints([]);
-    setShowOrderHistory(false);
-    setShowMyComplaints(false);
+    closeAccountPanel();
+    setProfileToolReturnToProfile(false);
+    setShowProfile(false);
+    setShowWallet(false);
+    setShowComplaint(false);
+    setShowAppProfileMenu(false);
+    setShowMenuOrders(false);
     setCheckout((prev) => ({ ...prev, fullName: "", contactNumber: "" }));
     showToast(message);
   }
@@ -1996,9 +2043,20 @@ export default function App() {
           <span className="product-stage" aria-hidden="true" />
           {imagePath ? (
             <img
-              className="product-image"
+              className={`product-image ${loadedProductImages.has(imagePath) ? "is-loaded" : ""}`}
               src={imagePath}
               alt={p.name}
+              loading={IS_NATIVE_APP ? "eager" : "lazy"}
+              decoding="async"
+              fetchPriority={IS_NATIVE_APP ? "high" : "auto"}
+              onLoad={() => {
+                setLoadedProductImages((current) => {
+                  if (current.has(imagePath)) return current;
+                  const next = new Set(current);
+                  next.add(imagePath);
+                  return next;
+                });
+              }}
               onError={(e) => {
                 e.currentTarget.style.display = "none";
               }}
@@ -3237,35 +3295,44 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setShowProfile(true);
-                  setShowAppProfileMenu(false);
+                  openProfileTool(() => setShowProfile(true));
                 }}
               >
                 Edit Profile
               </button>
+              <div className="app-profile-section-title">My Orders & Support</div>
+              <div className="app-profile-subactions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    openAccountPanel("orders", { returnToProfile: true });
+                    setShowAppProfileMenu(false);
+                  }}
+                >
+                  View Order History
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openProfileTool(openComplaintFlow);
+                  }}
+                >
+                  Having issue with your current order?
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openAccountPanel("complaints", { returnToProfile: true });
+                    setShowAppProfileMenu(false);
+                  }}
+                >
+                  View My Complaints
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => {
-                  openAccountPanel("orders");
-                  setShowAppProfileMenu(false);
-                }}
-              >
-                My Orders
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  openComplaintFlow();
-                  setShowAppProfileMenu(false);
-                }}
-              >
-                Support & Complaints
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowWallet(true);
-                  setShowAppProfileMenu(false);
+                  openProfileTool(() => setShowWallet(true));
                 }}
               >
                 Wallet Coins
@@ -3297,11 +3364,21 @@ export default function App() {
         <div
           className="modal"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setShowWallet(false);
+            if (e.target === e.currentTarget) closeProfileTool(() => setShowWallet(false));
           }}
         >
           <div className="modal-card wallet-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="close-btn" onClick={() => setShowWallet(false)}>x</button>
+            {IS_NATIVE_APP && profileToolReturnToProfile ? (
+              <button
+                className="modal-back-btn"
+                type="button"
+                onClick={() => returnToProfileFromTool(() => setShowWallet(false))}
+                aria-label="Back to profile tools"
+              >
+                &larr;
+              </button>
+            ) : null}
+            <button className="close-btn" onClick={() => closeProfileTool(() => setShowWallet(false))}>x</button>
             <p className="kicker">My Farms Wallet</p>
             <h3>Your Coins</h3>
             <div className="wallet-balance-card">
@@ -3368,23 +3445,27 @@ export default function App() {
                       body: JSON.stringify({ email: verificationForm.email, code })
                     });
 
-                    setUser(data.user);
+                    const nextUser = data.user;
+                    if (!nextUser) {
+                      throw new Error("Email verified, but profile details could not be loaded. Please login again.");
+                    }
+                    setUser(nextUser);
                     setShowAuth(false);
                     setVerificationForm({ email: "", code: "", devCode: "" });
                     setAuthForm({ name: "", email: "", password: "" });
                     setShowAuthPassword(false);
                     setAuthMode("login");
                     setProfileForm({
-                      name: data.user.name || "",
-                      email: data.user.email || "",
-                      mobileNumber: data.user.mobileNumber || ""
+                      name: nextUser.name || "",
+                      email: nextUser.email || "",
+                      mobileNumber: nextUser.mobileNumber || ""
                     });
                     setCheckout((prev) => ({
                       ...prev,
-                      fullName: data.user.name || "",
-                      contactNumber: data.user.mobileNumber || ""
+                      fullName: nextUser.name || "",
+                      contactNumber: nextUser.mobileNumber || ""
                     }));
-                    showToast(`Hi ${data.user.name}, your email is verified`);
+                    showToast(`Hi ${nextUser.name}, your email is verified`);
                   } catch (err) {
                     showToast(err.message);
                   } finally {
@@ -3482,6 +3563,10 @@ export default function App() {
                         showToast("Name is required for signup");
                         return;
                       }
+                      if (!authTermsAccepted) {
+                        showToast("Please accept My Farms Terms and Conditions");
+                        return;
+                      }
                       const availability = await api(`/api/auth/check-email?email=${encodeURIComponent(email)}`);
                       if (!availability.available) {
                         if (availability.requiresEmailVerification) {
@@ -3493,6 +3578,7 @@ export default function App() {
                         return;
                       }
                       payload.name = name;
+                      payload.termsAccepted = true;
                       endpoint = "/api/auth/signup";
                     }
 
@@ -3508,22 +3594,27 @@ export default function App() {
                       return;
                     }
 
-                    setUser(data.user);
+                    const nextUser = data.user;
+                    if (!nextUser) {
+                      throw new Error("Login completed, but profile details could not be loaded. Please try again.");
+                    }
+                    setUser(nextUser);
                     setShowAuth(false);
                     setAuthForm({ name: "", email: "", password: "" });
+                    setAuthTermsAccepted(false);
                     setShowAuthPassword(false);
                     setAuthMode("login");
                     setProfileForm({
-                      name: data.user.name || "",
-                      email: data.user.email || "",
-                      mobileNumber: data.user.mobileNumber || ""
+                      name: nextUser.name || "",
+                      email: nextUser.email || "",
+                      mobileNumber: nextUser.mobileNumber || ""
                     });
                     setCheckout((prev) => ({
                       ...prev,
-                      fullName: data.user.name || "",
-                      contactNumber: data.user.mobileNumber || ""
+                      fullName: nextUser.name || "",
+                      contactNumber: nextUser.mobileNumber || ""
                     }));
-                    showToast(`Hi ${data.user.name}, thanks for choosing My Farms`);
+                    showToast(`Hi ${nextUser.name}, thanks for choosing My Farms`);
                   } catch (err) {
                     if (err.data?.requiresEmailVerification && err.data?.email) {
                       openVerificationStep(err.data.email);
@@ -3561,7 +3652,24 @@ export default function App() {
                     <span>Show password</span>
                   </label>
                 </div>
-                <button className="btn-primary" type="submit">
+                {authMode === "signup" ? (
+                  <label className="checkbox-inline terms-check">
+                    <input
+                      type="checkbox"
+                      checked={authTermsAccepted}
+                      onChange={(e) => setAuthTermsAccepted(e.target.checked)}
+                      required
+                    />
+                    <span>
+                      I agree to the{" "}
+                      <a href={termsUrl} target="_blank" rel="noreferrer">
+                        My Farms Terms and Conditions
+                      </a>
+                      .
+                    </span>
+                  </label>
+                ) : null}
+                <button className="btn-primary" type="submit" disabled={isAuthSubmitting}>
                   {isAuthSubmitting ? (
                     <span className="btn-loading">
                       <span className="spinner" />
@@ -3577,6 +3685,7 @@ export default function App() {
                   disabled={isAuthSubmitting}
                   onClick={() => {
                     setVerificationForm({ email: "", code: "", devCode: "" });
+                    setAuthTermsAccepted(false);
                     setAuthMode((m) => (m === "login" ? "signup" : "login"));
                   }}
                 >
@@ -3979,11 +4088,21 @@ export default function App() {
         <div
           className="modal"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setAccountPanel(null);
+            if (e.target === e.currentTarget) closeAccountPanel();
           }}
         >
           <div className="modal-card account-panel-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="close-btn" onClick={() => setAccountPanel(null)}>x</button>
+            {IS_NATIVE_APP && accountPanelReturnToProfile ? (
+              <button
+                className="modal-back-btn"
+                type="button"
+                onClick={returnToProfileTools}
+                aria-label="Back to profile tools"
+              >
+                &larr;
+              </button>
+            ) : null}
+            <button className="close-btn" onClick={closeAccountPanel}>x</button>
             <p className="kicker">Customer Desk</p>
             <h3>{accountPanel === "orders" ? "Order History" : "My Complaints"}</h3>
             {!user ? (
@@ -4031,7 +4150,9 @@ export default function App() {
                         <button
                           className="btn-ghost small"
                           onClick={() => {
-                            setAccountPanel(null);
+                            const shouldReturnToProfile = accountPanelReturnToProfile;
+                            closeAccountPanel();
+                            setProfileToolReturnToProfile(shouldReturnToProfile);
                             setComplaintForm((s) => ({
                               ...s,
                               orderNumber: s.orderNumber || `#${o.id.slice(-6).toUpperCase()}`
@@ -4158,7 +4279,17 @@ export default function App() {
       {showProfile && user ? (
         <div className="modal">
           <div className="modal-card">
-            <button className="close-btn" onClick={() => setShowProfile(false)}>x</button>
+            {IS_NATIVE_APP && profileToolReturnToProfile ? (
+              <button
+                className="modal-back-btn"
+                type="button"
+                onClick={() => returnToProfileFromTool(() => setShowProfile(false))}
+                aria-label="Back to profile tools"
+              >
+                &larr;
+              </button>
+            ) : null}
+            <button className="close-btn" onClick={() => closeProfileTool(() => setShowProfile(false))}>x</button>
             <h3>Edit Profile</h3>
             <form
               onSubmit={async (e) => {
@@ -4194,7 +4325,7 @@ export default function App() {
                     body: JSON.stringify(payload)
                   });
                   setUser(data.user);
-                  setShowProfile(false);
+                  closeProfileTool(() => setShowProfile(false));
                   showToast("Profile updated");
                 } catch (err) {
                   showToast(err.message);
@@ -4258,7 +4389,7 @@ export default function App() {
                   setIsDeletingAccount(true);
                   try {
                     await api("/api/auth/account", { method: "DELETE" });
-                    setShowProfile(false);
+                    closeProfileTool(() => setShowProfile(false));
                     setUser(null);
                     setOrders([]);
                     setComplaints([]);
@@ -4346,7 +4477,17 @@ export default function App() {
       {showComplaint ? (
         <div className="modal">
           <div className="modal-card">
-            <button className="close-btn" onClick={() => setShowComplaint(false)}>x</button>
+            {IS_NATIVE_APP && profileToolReturnToProfile ? (
+              <button
+                className="modal-back-btn"
+                type="button"
+                onClick={() => returnToProfileFromTool(() => setShowComplaint(false))}
+                aria-label="Back to profile tools"
+              >
+                &larr;
+              </button>
+            ) : null}
+            <button className="close-btn" onClick={() => closeProfileTool(() => setShowComplaint(false))}>x</button>
             <h3>Report Order Issue</h3>
             <form
               onSubmit={async (e) => {
@@ -4376,7 +4517,7 @@ export default function App() {
                       return fd;
                     })()
                   });
-                  setShowComplaint(false);
+                  closeProfileTool(() => setShowComplaint(false));
                   setComplaintForm({ orderNumber: "", issue: "", proofImage: null });
                   await loadComplaints();
                   showToast("Issue reported to customer representative. We will respond very shortly.");
@@ -4409,14 +4550,34 @@ export default function App() {
               </div>
               <div className="field">
                 <label>Upload Proof Photo (Optional)</label>
-                <input
-                  type="file"
-                  accept=".png,.jpg,.jpeg,.webp"
-                  onChange={(e) => {
-                    const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-                    setComplaintForm((s) => ({ ...s, proofImage: file }));
-                  }}
-                />
+                <div className="proof-photo-actions">
+                  <label className="btn-ghost proof-photo-btn">
+                    Take Photo
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => {
+                        const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+                        setComplaintForm((s) => ({ ...s, proofImage: file }));
+                      }}
+                    />
+                  </label>
+                  <label className="btn-ghost proof-photo-btn">
+                    Choose from Gallery
+                    <input
+                      type="file"
+                      accept="image/*,.png,.jpg,.jpeg,.webp"
+                      onChange={(e) => {
+                        const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+                        setComplaintForm((s) => ({ ...s, proofImage: file }));
+                      }}
+                    />
+                  </label>
+                </div>
+                {complaintForm.proofImage ? (
+                  <div className="small muted">Selected: {complaintForm.proofImage.name}</div>
+                ) : null}
               </div>
               <button className="btn-primary" type="submit" disabled={isComplaintSubmitting}>
                 {isComplaintSubmitting ? (

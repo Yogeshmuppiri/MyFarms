@@ -24,6 +24,8 @@ const els = {
   toggleAuthMode: document.getElementById("toggleAuthMode"),
   forgotBtn: document.getElementById("forgotBtn"),
   nameField: document.getElementById("nameField"),
+  termsField: document.getElementById("termsField"),
+  authTerms: document.getElementById("authTerms"),
   authName: document.getElementById("authName"),
   authEmail: document.getElementById("authEmail"),
   authPassword: document.getElementById("authPassword"),
@@ -273,6 +275,9 @@ function setAuthMode(mode) {
   els.authSubmit.textContent = signup ? "Signup" : "Login";
   els.toggleAuthMode.textContent = signup ? "Already have account" : "Create account";
   els.nameField.classList.toggle("hidden", !signup);
+  els.termsField.classList.toggle("hidden", !signup);
+  els.authTerms.required = signup;
+  if (!signup) els.authTerms.checked = false;
 }
 
 async function renderOrders() {
@@ -439,7 +444,12 @@ async function init() {
           showToast("Name is required for signup");
           return;
         }
+        if (!els.authTerms.checked) {
+          showToast("Please accept My Farms Terms and Conditions");
+          return;
+        }
         payload.name = name;
+        payload.termsAccepted = true;
         endpoint = "/api/auth/signup";
       }
 
@@ -454,6 +464,7 @@ async function init() {
       renderOrders();
       showToast(`Hi ${state.user.name}, thanks for choosing My Farms`);
       els.authForm.reset();
+      els.authTerms.checked = false;
       setAuthMode("login");
     } catch (err) {
       showToast(err.message);

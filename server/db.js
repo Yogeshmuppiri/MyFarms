@@ -12,6 +12,8 @@ const userSchema = new mongoose.Schema(
     emailVerificationExpiresAt: { type: Date, default: null },
     resetTokenHash: { type: String, default: null },
     resetTokenExpiresAt: { type: Date, default: null },
+    termsAcceptedAt: { type: Date, default: null },
+    termsVersion: { type: String, default: null },
     walletCoins: { type: Number, default: 0, min: 0 }
   },
   { timestamps: true }

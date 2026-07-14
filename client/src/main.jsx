@@ -14,14 +14,16 @@ if (isNativeApp || isStandaloneApp || isCustomerAppPreview) {
 
 function showStartupFailure(reason) {
   console.error("My Farms startup failed:", reason);
+  if (isNativeApp || isStandaloneApp || isCustomerAppPreview) return;
   const root = document.getElementById("root");
   if (!root || root.dataset.startupErrorShown === "true") return;
+  if (root.dataset.appMounted === "true" || root.childElementCount > 0) return;
   root.dataset.startupErrorShown = "true";
   root.innerHTML = `
     <main style="min-height:100vh;display:grid;place-items:center;padding:24px;color:#1f2e22;">
       <section style="max-width:420px;padding:22px;border:1px solid rgba(47,125,72,.22);border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 18px 50px rgba(31,46,34,.12);">
-        <h1 style="margin:0 0 8px;font-size:22px;">Unable to start My Farms</h1>
-        <p style="margin:0;color:#647067;line-height:1.5;">Please close and reopen the app. If this continues, install the latest test version.</p>
+        <h1 style="margin:0 0 8px;font-size:22px;">My Farms needs a moment</h1>
+        <p style="margin:0;color:#647067;line-height:1.5;">Please refresh the page and try again.</p>
       </section>
     </main>
   `;
@@ -38,7 +40,7 @@ window.addEventListener("unhandledrejection", (event) => {
 class RootErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, retryCount: 0 };
   }
 
   static getDerivedStateFromError(error) {
@@ -47,6 +49,14 @@ class RootErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     console.error("My Farms app failed to render:", error, info);
+    if (isNativeApp && this.state.retryCount < 3) {
+      window.setTimeout(() => {
+        this.setState((current) => ({
+          error: null,
+          retryCount: current.retryCount + 1
+        }));
+      }, 350);
+    }
   }
 
   render() {
@@ -72,10 +82,25 @@ class RootErrorBoundary extends React.Component {
             boxShadow: "0 18px 50px rgba(31, 46, 34, 0.12)"
           }}
         >
-          <h1 style={{ margin: "0 0 8px", fontSize: "22px" }}>Unable to start My Farms</h1>
+          <h1 style={{ margin: "0 0 8px", fontSize: "22px" }}>My Farms needs a moment</h1>
           <p style={{ margin: 0, color: "#647067", lineHeight: 1.5 }}>
-            Please close and reopen the app. If this continues, install the latest test version.
+            Please try again. Your cart and account state are still safe.
           </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ error: null })}
+            style={{
+              marginTop: "16px",
+              border: 0,
+              borderRadius: "12px",
+              padding: "11px 16px",
+              background: "#2f7d48",
+              color: "#fff",
+              fontWeight: 800
+            }}
+          >
+            Try Again
+          </button>
         </section>
       </main>
     );
@@ -89,6 +114,13 @@ createRoot(document.getElementById("root")).render(
     </RootErrorBoundary>
   </React.StrictMode>
 );
+
+window.setTimeout(() => {
+  const root = document.getElementById("root");
+  if (root && root.children.length) {
+    root.dataset.appMounted = "true";
+  }
+}, 0);
 
 if ("serviceWorker" in navigator && import.meta.env.PROD && !isNativeApp) {
   window.addEventListener("load", () => {

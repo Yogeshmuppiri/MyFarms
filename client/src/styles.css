@@ -1988,7 +1988,18 @@ main > * {
   margin-top: 1rem;
 }
 
+.app-profile-section-title {
+  margin-top: 0.2rem;
+  color: var(--leaf-dark);
+  font-size: 0.96rem;
+  font-weight: 900;
+}
+
 .app-profile-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   width: 100%;
   min-height: 48px;
   padding: 0.75rem 0.85rem;
@@ -2002,6 +2013,13 @@ main > * {
   cursor: pointer;
 }
 
+.app-profile-actions button span {
+  flex: 0 0 auto;
+  color: #4d6a55;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
 .app-profile-actions button:active {
   background: #eaf5e6;
 }
@@ -2010,6 +2028,40 @@ main > * {
   border-color: rgba(189, 58, 55, 0.25);
   background: #fff7f6;
   color: #a3312e;
+}
+
+.app-profile-subactions {
+  display: grid;
+  gap: 0.45rem;
+  padding-left: 0.65rem;
+  border-left: 2px solid rgba(47, 125, 72, 0.16);
+}
+
+.app-profile-subactions button {
+  justify-content: flex-start;
+  min-height: 42px;
+  padding: 0.62rem 0.75rem;
+  font-size: 0.9rem;
+  background: rgba(244, 250, 239, 0.82);
+}
+
+.proof-photo-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.proof-photo-btn {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 44px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.proof-photo-btn input {
+  display: none;
 }
 
 .brand-footer {
@@ -2666,6 +2718,17 @@ main > * {
   height: 16px;
   margin: 0;
   accent-color: var(--leaf);
+}
+
+.terms-check {
+  align-items: flex-start;
+  line-height: 1.35;
+  margin: 0 0 0.85rem;
+}
+
+.terms-check a {
+  color: var(--leaf);
+  font-weight: 900;
 }
 
 .auth-note,
@@ -3449,6 +3512,22 @@ select:disabled {
   width: 30px;
   height: 30px;
   border-radius: 10px;
+  cursor: pointer;
+}
+
+.modal-back-btn {
+  position: absolute;
+  left: 0.5rem;
+  top: 0.5rem;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 12px;
+  background: #eef6ea;
+  color: var(--leaf-dark);
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 900;
   cursor: pointer;
 }
 

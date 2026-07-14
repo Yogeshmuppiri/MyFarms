@@ -906,9 +906,13 @@ app.post("/api/auth/signup", async (req, res) => {
     const name = String(req.body.name || "").trim();
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || "");
+    const termsAccepted = req.body.termsAccepted === true;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: "Name, email, and password are required" });
+    }
+    if (!termsAccepted) {
+      return res.status(400).json({ error: "Please accept My Farms Terms and Conditions" });
     }
     if (!isAllowedCustomerEmailDomain(email)) {
       return res.status(400).json({ error: "Use a valid Gmail or Yahoo email address (example@gmail.com)" });
@@ -934,7 +938,9 @@ app.post("/api/auth/signup", async (req, res) => {
       mobileNumber: null,
       isEmailVerified: false,
       emailVerificationCodeHash: null,
-      emailVerificationExpiresAt: null
+      emailVerificationExpiresAt: null,
+      termsAcceptedAt: new Date(),
+      termsVersion: "2026-07"
     });
 
     const verificationCode = await issueEmailVerificationForUser(user);
