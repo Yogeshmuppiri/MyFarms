@@ -80,6 +80,7 @@ export default function App() {
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState(1);
   const [showForgot, setShowForgot] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [showFreshnessChecker, setShowFreshnessChecker] = useState(false);
@@ -129,6 +130,7 @@ export default function App() {
   const cartRef = useRef([]);
   const checkoutRef = useRef(null);
   const showCheckoutRef = useRef(false);
+  const checkoutStepRef = useRef(1);
   const isPlacingOrderRef = useRef(false);
   const pendingAssistantOrderConfirmationRef = useRef(false);
   const freshnessVideoRef = useRef(null);
@@ -237,6 +239,13 @@ export default function App() {
     }).sort((a, b) => Math.abs(b.offset) - Math.abs(a.offset));
   }, [heroCarouselIndex, heroShowcaseSource]);
   const trackedOrders = useMemo(() => (orders || []).filter((order) => order.canTrack).slice(0, 4), [orders]);
+  const activeNavOrderCount = useMemo(
+    () => (orders || []).filter((order) => {
+      const status = String(order.status || "").toUpperCase();
+      return order.canTrack && status !== "CANCELED" && !isDeliveredStatus(status);
+    }).length,
+    [orders]
+  );
   const productImageUrls = useMemo(() => {
     const urls = new Set();
     for (const product of products) {
@@ -273,9 +282,10 @@ export default function App() {
     cartRef.current = cart;
     checkoutRef.current = checkout;
     showCheckoutRef.current = showCheckout;
+    checkoutStepRef.current = checkoutStep;
     isPlacingOrderRef.current = isPlacingOrder;
     pendingAssistantOrderConfirmationRef.current = pendingAssistantOrderConfirmation;
-  }, [products, categories, filteredProducts, selectedCategory, cartItemCount, user, cart, checkout, showCheckout, isPlacingOrder, pendingAssistantOrderConfirmation]);
+  }, [products, categories, filteredProducts, selectedCategory, cartItemCount, user, cart, checkout, showCheckout, checkoutStep, isPlacingOrder, pendingAssistantOrderConfirmation]);
 
   useEffect(() => {
     if (!productImageUrls.length) return undefined;
@@ -313,6 +323,7 @@ export default function App() {
 
   const hasOpenOverlay = Boolean(
     showAuth ||
+    showTerms ||
     showForgot ||
     showProfile ||
     showWallet ||
@@ -1027,7 +1038,7 @@ export default function App() {
     const commands = {
       Thumb_Up: {
         label: "Thumbs Up",
-        action: "Add selected product"
+        action: showCheckoutRef.current ? "Next checkout step" : "Add selected product"
       },
       Thumb_Down: {
         label: "Thumbs Down",
@@ -1047,7 +1058,7 @@ export default function App() {
       },
       Victory: {
         label: "Victory",
-        action: "Open checkout"
+        action: showCheckoutRef.current ? "Checkout is already open" : "Open checkout"
       },
       ILoveYou: {
         label: "I Love You",
@@ -1059,6 +1070,35 @@ export default function App() {
       label: String(gestureName || "Unknown").replace(/_/g, " "),
       action: "Hold a supported gesture"
     };
+  }
+
+  function getThumbUpCheckoutAction() {
+    const step = checkoutStepRef.current || checkoutStep;
+    if (step < 3) return `Go to checkout step ${step + 1}`;
+    return "Ask before placing order";
+  }
+
+  function requestGestureOrderConfirmation() {
+    if (!canContinueCheckoutStep(1) || !canContinueCheckoutStep(2)) return false;
+    pendingAssistantOrderConfirmationRef.current = true;
+    setPendingAssistantOrderConfirmation(true);
+    setAssistantMessage("Confirm order placement using the buttons, or say yes to place order.");
+    setGestureStatus("Final checkout step ready. Confirm before placing the order.");
+    showToast("Confirm order before placing");
+    return true;
+  }
+
+  function handleCheckoutGestureNext() {
+    const step = checkoutStepRef.current || checkoutStep;
+    if (step < 3) {
+      if (!canContinueCheckoutStep(step)) return;
+      setCheckoutNotice("");
+      setCheckoutStep(Math.min(step + 1, 3));
+      setGestureStatus(`Thumbs Up confirmed: moved to checkout step ${Math.min(step + 1, 3)}.`);
+      setAssistantMessage(step + 1 === 3 ? "Review your order. Hold thumbs up again to confirm placement." : "Moved to payment step.");
+      return;
+    }
+    requestGestureOrderConfirmation();
   }
 
   function getGestureTargetProduct() {
@@ -1265,6 +1305,10 @@ export default function App() {
     const command = getGestureCommand(gestureName);
 
     if (gestureName === "Thumb_Up") {
+      if (showCheckoutRef.current) {
+        handleCheckoutGestureNext();
+        return;
+      }
       const product = getGestureTargetProduct();
       if (product) {
         addProductDirectly(product);
@@ -1306,8 +1350,13 @@ export default function App() {
     }
 
     if (gestureName === "Victory") {
+      if (showCheckoutRef.current) {
+        setGestureStatus("Checkout is already open. Hold thumbs up for Next, then thumbs up again on Review to confirm.");
+        setAssistantMessage("Checkout is open. Use thumbs up to move forward.");
+        return;
+      }
       openCheckoutFlow();
-      setGestureStatus(`Confirmed ${command.label}: opening checkout`);
+      setGestureStatus(`Confirmed ${command.label}: opening checkout at step 1`);
       return;
     }
 
@@ -1346,15 +1395,17 @@ export default function App() {
     }
 
     const progress = Math.min(100, Math.round((stable.count / 4) * 100));
-    const targetProduct = name === "Thumb_Up" ? getGestureTargetProduct() : null;
+    const targetProduct = name === "Thumb_Up" && !showCheckoutRef.current ? getGestureTargetProduct() : null;
     const selectedProduct = gestureSelectedProductIdRef.current
       ? productsRef.current.find((product) => String(product.id) === String(gestureSelectedProductIdRef.current))
       : null;
     const action = targetProduct
       ? `Add ${targetProduct.name}`
-      : name === "Pointing_Up" && selectedProduct
-        ? `Move selection from ${selectedProduct.name}`
-        : command.action;
+      : name === "Thumb_Up" && showCheckoutRef.current
+        ? getThumbUpCheckoutAction()
+        : name === "Pointing_Up" && selectedProduct
+          ? `Move selection from ${selectedProduct.name}`
+          : command.action;
     setGestureDetected({ label: command.label, confidence, action });
     setGestureStatus(`${command.label} detected (${confidence}%). ${action}. Hold steady ${progress}%.`);
 
@@ -3041,7 +3092,7 @@ export default function App() {
               <path d="M7 4h10v16H7zM9 8h6M9 12h6M9 16h4" />
             </svg>
             <span>Orders</span>
-            {trackedOrders.length ? <strong className="app-nav-badge">{trackedOrders.length}</strong> : null}
+            {activeNavOrderCount ? <strong className="app-nav-badge">{activeNavOrderCount}</strong> : null}
           </button>
           <button type="button" onClick={() => handleCustomerAppNav("profile")}>
             <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -3159,10 +3210,16 @@ export default function App() {
               </div>
               <div className="gesture-help">
                 <span>{gestureStatus}</span>
+                {gestureCameraOn ? (
+                  <div className="gesture-guide-note">
+                    <strong>Gesture guide</strong>
+                    <small>Victory opens checkout. In checkout, hold Thumbs Up for Next. On Review, Thumbs Up asks for final confirmation.</small>
+                  </div>
+                ) : null}
                 <div className="gesture-command-grid" aria-label="Gesture commands">
                   <span>Finger Hold: Add</span>
                   <span>Thumbs Down: Remove</span>
-                  <span>Thumbs Up: Add Selected</span>
+                  <span>Thumbs Up: Add / Next</span>
                   <span>Open Palm: Down</span>
                   <span>Fist: Up</span>
                   <span>Victory: Checkout</span>
@@ -3662,9 +3719,19 @@ export default function App() {
                     />
                     <span>
                       I agree to the{" "}
-                      <a href={termsUrl} target="_blank" rel="noreferrer">
-                        My Farms Terms and Conditions
-                      </a>
+                      {IS_NATIVE_APP ? (
+                        <button
+                          className="terms-link-button"
+                          type="button"
+                          onClick={() => setShowTerms(true)}
+                        >
+                          My Farms Terms and Conditions
+                        </button>
+                      ) : (
+                        <a href={termsUrl} target="_blank" rel="noreferrer">
+                          My Farms Terms and Conditions
+                        </a>
+                      )}
                       .
                     </span>
                   </label>
@@ -4050,7 +4117,7 @@ export default function App() {
         <div className="assistant-confirm-overlay" role="presentation">
           <div className="assistant-confirm-card" role="dialog" aria-modal="true" aria-live="assertive" aria-label="Confirm order placement">
             <strong>Place this order?</strong>
-            <span>Say yes to place order, or no to cancel.</span>
+            <span>Tap Yes to place order, or No to cancel. Voice users can also say yes or no.</span>
             <div>
               <button className="btn-primary small" type="button" onClick={confirmAssistantOrderPlacement}>
                 Yes
@@ -4059,6 +4126,68 @@ export default function App() {
                 No
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showTerms ? (
+        <div
+          className="modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowTerms(false);
+          }}
+        >
+          <div className="modal-card terms-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={() => setShowTerms(false)}>x</button>
+            <p className="kicker">My Farms</p>
+            <h3>Terms and Conditions</h3>
+            <p className="muted small">Last updated: July 2026</p>
+            <p>
+              By creating an account, you agree that My Farms may use your information to create and protect your
+              account, process orders, coordinate delivery or pickup, contact you about service needs, and prevent
+              misuse or unauthorized activity.
+            </p>
+            <div className="terms-retention-list">
+              <div>
+                <strong>Email, phone number, and profile name</strong>
+                <span>Stored until you delete your account or ask us to remove it.</span>
+              </div>
+              <div>
+                <strong>Delivery address and order contact details</strong>
+                <span>Kept with order records for up to 6 months for support, delivery checks, and business records.</span>
+              </div>
+              <div>
+                <strong>Active delivery tracking details</strong>
+                <span>Shown while an order is active; delivered orders stay in the recent tracker for 48 hours.</span>
+              </div>
+              <div>
+                <strong>Order history</strong>
+                <span>Available for up to 6 months. Older order details may be removed from customer history.</span>
+              </div>
+              <div>
+                <strong>Support complaints and proof photos</strong>
+                <span>Used to resolve issues and normally retained for up to 30 days after resolution.</span>
+              </div>
+              <div>
+                <strong>Emails and phone calls</strong>
+                <span>We may email or call you for verification, order updates, delivery coordination, and support.</span>
+              </div>
+            </div>
+            <p>
+              Privacy Policy:{" "}
+              <a href="https://myfarms.onrender.com/privacy-policy.html" target="_blank" rel="noreferrer">
+                https://myfarms.onrender.com/privacy-policy.html
+              </a>
+            </p>
+            <p>
+              Account Deletion:{" "}
+              <a href="https://myfarms.onrender.com/account-deletion.html" target="_blank" rel="noreferrer">
+                https://myfarms.onrender.com/account-deletion.html
+              </a>
+            </p>
+            <button className="btn-primary" type="button" onClick={() => setShowTerms(false)}>
+              Done
+            </button>
           </div>
         </div>
       ) : null}

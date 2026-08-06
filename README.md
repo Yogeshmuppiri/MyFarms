@@ -8,7 +8,7 @@ Responsive farm-to-home e-commerce platform for fresh produce, dairy, meat, oil,
 - Product catalogue with categories for Fruits, Vegetables, Dairy, Meat, and Oil.
 - Product images served from local resources or uploaded/admin-managed image paths.
 - Product variants, including variant-specific pricing and stock.
-- Product search, category filters, featured products, sorting, and signature product showcase.
+- Product search, category filters, featured products, sorting, and signature produce showcase.
 - Product preview drawer with image, price, stock, description, variants, and add-to-cart flow.
 - Cart with quantity controls and stock-aware add-to-cart behavior.
 - Mobile-optimized layout with compact shop controls and a circular Farm Assistant launcher.

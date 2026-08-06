@@ -2607,6 +2607,10 @@ main > * {
 
 .manage-order-modal {
   width: min(92vw, 560px);
+  max-height: min(88vh, 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 1.2rem;
 }
 
 .manage-order-list {
@@ -2731,6 +2735,48 @@ main > * {
   font-weight: 900;
 }
 
+.terms-link-button {
+  border: 0;
+  background: none;
+  color: var(--leaf);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.terms-modal {
+  max-height: 82vh;
+  overflow: auto;
+}
+
+.terms-retention-list {
+  display: grid;
+  gap: 0.7rem;
+  margin: 1rem 0;
+}
+
+.terms-retention-list div {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #fbfff8;
+}
+
+.terms-retention-list strong,
+.terms-retention-list span {
+  display: block;
+}
+
+.terms-retention-list span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  margin-top: 0.25rem;
+}
+
 .auth-note,
 .auth-dev-note {
   margin: 0 0 0.8rem;
@@ -2786,6 +2832,10 @@ select:disabled {
 
 .wallet-modal {
   width: min(96vw, 620px);
+  max-height: min(88vh, 760px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 1.2rem;
 }
 
 .freshness-modal {
@@ -2940,6 +2990,25 @@ select:disabled {
   background:
     radial-gradient(circle at 85% 10%, rgba(255, 226, 136, 0.24), transparent 34%),
     linear-gradient(145deg, #fffef8, #f5fbf0);
+}
+
+.gesture-guide-note {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.58rem 0.64rem;
+  border-radius: 14px;
+  border: 1px solid rgba(47, 125, 72, 0.18);
+  background: linear-gradient(135deg, rgba(238, 248, 232, 0.96), rgba(255, 253, 244, 0.96));
+}
+
+.gesture-guide-note strong {
+  color: var(--leaf-dark);
+  font-size: 0.84rem;
+}
+
+.gesture-guide-note small {
+  color: #526156;
+  line-height: 1.4;
 }
 
 .gesture-command-grid {
@@ -3486,8 +3555,9 @@ select:disabled {
 }
 
 .checkout-modal {
-  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-bottom: 1.2rem;
 }
 
