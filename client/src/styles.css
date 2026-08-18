@@ -4941,3 +4941,43 @@ select:disabled {
     transform: translateX(-50%);
   }
 }
+
+/* Android WebView can drop 3D-transformed card layers while fast scrolling.
+   Keep app product cards in a normal 2D paint path so product actions stay visible. */
+.native-app .product-card,
+.native-app .product-media,
+.native-app .product-image,
+.native-app .product-card-body {
+  transform: none;
+  transform-style: flat;
+  backface-visibility: visible;
+  -webkit-backface-visibility: visible;
+}
+
+.native-app .product-card {
+  contain: layout paint;
+  isolation: auto;
+}
+
+.native-app .product-card::before,
+.native-app .product-card-glow,
+.native-app .product-card-sheen {
+  transform: none;
+}
+
+.native-app .product-media {
+  z-index: 1;
+}
+
+.native-app .product-card-body {
+  position: relative;
+  z-index: 3;
+  min-height: 116px;
+  opacity: 1;
+  visibility: visible;
+}
+
+.native-app .product-card .btn-primary {
+  margin-top: auto;
+  min-height: 46px;
+}
